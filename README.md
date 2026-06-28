@@ -192,8 +192,7 @@ the reported results, but are worth being aware of.
 
 | # | What | Paper | This code | Impact |
 |---|---|---|---|---|
-| 1 | Learning rate (Stage 2) | 0.01 for CIFAR-10 | 0.1 for ResNet architectures | May train faster/noisier; tune with `--lr` if needed |
-| 2 | Default `--action_num` for ResNet | 5 (CIFAR-10), 40 (ImageNet) | 40 if not specified | Always pass `--action_num 5` for CIFAR-10 experiments |
-| 3 | Default `--epochs` | 100 | 10 | Always pass `--epochs 100` explicitly |
-| 4 | Gate clamping | Not mentioned | Gates clamped to [0, 5] after each Adam step | Stabilises training; no known downside |
-| 5 | Supported architectures | VGG16-BN, ResNet-56/50 | ResNet variants, HAR-CNN, KWS-CNN | VGG-family models not available |
+| 1 | Default `--action_num` for ResNet | 5 (CIFAR-10), 40 (ImageNet) | 40 if not specified | Always pass `--action_num 5` for CIFAR-10 experiments |
+| 2 | Default `--epochs` | 100 | 10 | Always pass `--epochs 100` explicitly |
+| 3 | Gate clamping | Not mentioned | Gates clamped to [0, 1] after each Adam step | Forces gate mean to represent fraction of active channels |
+| 4 | Supported architectures | VGG16-BN, ResNet-56/50 | ResNet variants, HAR-CNN, KWS-CNN | VGG-family models not available |

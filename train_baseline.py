@@ -34,9 +34,11 @@ model = misc.initialize_model(args.dataset, args.arch, args.num_classes)
 
 model = model.to(args.device)
 
+_lr = args.lr if args.lr is not None else misc.learning_rate(args.arch)
+
 optimizer = torch.optim.SGD(
     model.parameters(),
-    lr=misc.learning_rate(args.arch),
+    lr=_lr,
     momentum=args.mm,
     weight_decay=args.wd,
 )

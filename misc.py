@@ -64,7 +64,7 @@ def learning_rate(arch):
     if arch == "kws":
         return 0.01
     elif arch == "har_cnn" or arch.startswith("resnet"):
-        return 0.1
+        return 0.01
     raise Exception("Unknown model architecture {}".format(arch))
 
 
@@ -182,6 +182,8 @@ def get_basic_argument_parser(default_wd: float):
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="kws", type=str)
     parser.add_argument("--arch", "-a", default="kws", type=str)
+    parser.add_argument("--lr", default=None, type=float,
+                        help="Learning rate override. Defaults to architecture-specific value.")
     parser.add_argument("--mm", default=0.9, type=float)
     parser.add_argument("--wd", default=default_wd, type=float)
     parser.add_argument("--epochs", default=10, type=int)

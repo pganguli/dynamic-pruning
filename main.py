@@ -76,12 +76,14 @@ model = model.to(args.device)
 head_params = default_graph.get_tensor_list("head_params")
 gate_params = default_graph.get_tensor_list("gate_params")
 
+_lr = args.lr if args.lr is not None else misc.learning_rate(args.arch)
+
 optimizer_gate = torch.optim.Adam(
-    head_params + gate_params, lr=misc.learning_rate(args.arch)
+    head_params + gate_params, lr=_lr
 )
 optimizer_model = torch.optim.SGD(
     model_params,
-    lr=misc.learning_rate(args.arch),
+    lr=_lr,
     momentum=args.mm,
     weight_decay=args.wd,
 )
