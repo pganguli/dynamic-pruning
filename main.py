@@ -109,11 +109,9 @@ def train(epoch):
         output = model(data)
         loss_ce = F.cross_entropy(output, target)
         selected_channels = default_graph.get_tensor_list("selected_channels")
-        loss_reg = (
-            args.gamma
-            * (torch.cat(selected_channels, dim=1).abs().mean() - args.sparsity_level)
-            ** 2
-        )
+        diff = torch.cat(selected_channels, dim=1).abs().mean() - args.sparsity_level
+        gamma_eff = args.gamma if diff > 0 else args.gamma * 0.1
+        loss_reg = gamma_eff * diff ** 2
         loss = loss_ce + loss_reg
 
         loss.backward()
@@ -177,9 +175,9 @@ def test():
             concat_channels = torch.cat(selected_channels, dim=1)
 
             test_loss_ce.append(F.cross_entropy(output, target).item())
-            test_loss_reg.append(
-                (args.gamma * (concat_channels.abs().mean() - args.sparsity_level) ** 2).item()
-            )
+            test_diff = concat_channels.abs().mean() - args.sparsity_level
+            test_gamma_eff = args.gamma if test_diff > 0 else args.gamma * 0.1
+            test_loss_reg.append((test_gamma_eff * test_diff ** 2).item())
             test_sparsity.append((concat_channels > args.pruning_threshold).float().mean().item())
 
             pred = output.max(1)[1]
