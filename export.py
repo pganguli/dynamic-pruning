@@ -30,8 +30,7 @@ def optimize_model(pytorch_exported_model: IO[bytes], model_name: str):
     onnx_model = onnx.load_model(pytorch_exported_model)
     onnx_model = onnx.shape_inference.infer_shapes(onnx_model)
     onnx_model = onnxoptimizer.optimize(onnx_model)
-    onnx_model, check = onnxsim.simplify(onnx_model)
-    assert check
+    onnx_model = onnxsim.simplify(onnx_model)  # 0.5+ returns model directly, raises on failure
     onnx.save_model(onnx_model, model_name)
 
 
@@ -40,7 +39,7 @@ def main():
     parser = misc.get_basic_argument_parser(default_wd=0)
     args = parser.parse_args()
 
-    args.num_classes = 10 if args.dataset == "cifar10" else 100
+    args.num_classes = {"cifar10": 10, "cifar100": 100, "har": 6, "kws": 12}.get(args.dataset, 10)
     args.logdir = "decision-%d/%s-%s/sparsity-%.2f" % (
         misc.action_num(args.arch),
         args.dataset,
@@ -55,6 +54,7 @@ def main():
     checkpoint = torch.load(
         os.path.join(args.logdir, "checkpoint.pth.tar"),
         map_location=torch.device("cpu"),
+        weights_only=True,
     )
 
     misc.transform_model(model, args.arch, misc.action_num(args.arch))
@@ -74,13 +74,14 @@ def main():
     elif args.dataset == "kws":
         dummy_input = torch.zeros((1, 1, 25, 10))
 
-    onnx_opset = 11
+    onnx_opset = 17
 
     torch.onnx.export(
         model,
         dummy_input,
         pytorch_exported_model_single,
         opset_version=onnx_opset,
+        dynamo=False,
     )
 
     apply_func(
@@ -95,6 +96,7 @@ def main():
         dummy_input,
         pytorch_exported_model_batched,
         opset_version=onnx_opset,
+        dynamo=False,
         input_names=["input.1"],
         dynamic_axes={
             "input.1": {0: "N"},

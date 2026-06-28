@@ -13,4 +13,4 @@
 tensorflow>=2.12,<3
 filelock>=3.13
 platformdirs>=4.0
-torchaudio>=2.3
+torchaudio==2.11.0

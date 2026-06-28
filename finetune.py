@@ -54,7 +54,8 @@ misc.transform_model(model, args.arch, misc.action_num(args.arch))
 print("==> Loading pretrained decision model...")
 ckpt = torch.load(
     "logs/decision-%d/%s-%s/sparsity-%.2f/model.pth.tar"
-    % (misc.action_num(args.arch), args.dataset, args.arch, args.sparsity_level)
+    % (misc.action_num(args.arch), args.dataset, args.arch, args.sparsity_level),
+    weights_only=True,
 )
 model.load_state_dict(ckpt["state_dict"])
 

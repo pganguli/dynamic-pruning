@@ -53,7 +53,10 @@ for p in model.parameters():
 
 print("==> Loading pretrained model...")
 model.load_state_dict(
-    torch.load("logs/pretrained/%s/%s/checkpoint.pth" % (args.dataset, args.arch))
+    torch.load(
+        "logs/pretrained/%s/%s/checkpoint.pth" % (args.dataset, args.arch),
+        weights_only=True,
+    )
 )
 
 misc.transform_model(model, args.arch, misc.action_num(args.arch))
