@@ -110,11 +110,12 @@ training, following the paper.
 
 ```bash
 # Paper settings for CIFAR-10 / ResNet-56
+# With default batch size 512, use ~400 epochs to match the paper's gradient step count
 python main.py --arch resnet56 --dataset cifar10 \
     --sparsity_level 0.4 \
     --gamma 1.0 \
     --action_num 5 \
-    --epochs 100
+    --epochs 400
 
 # HAR
 python main.py --arch har_cnn --dataset har \
@@ -174,10 +175,10 @@ Outputs: `<dataset>_<arch>-single.onnx` and `<dataset>_<arch>-batched.onnx`.
 | `--sparsity_level` | *r* | Target fraction of channels to keep active | 0.4 |
 | `--gamma` | *γ* | Regularization balance factor (Eq. 1) | 1.0 |
 | `--action_num` | *m* | Channel-selection masks per decision unit | 5 |
-| `--epochs` | — | Training epochs | 100 (Stage 2), 160 (Stages 1 & 3) |
+| `--epochs` | — | Training epochs | 400 (Stage 2 @ batch 512), 160 (Stages 1 & 3) |
 | `--mm` | — | SGD momentum for backbone optimizer | 0.9 |
 | `--wd` | — | Weight decay for backbone optimizer | 1e-4 (Stage 1), 1e-9 (Stage 2) |
-| `--train_batch_size` | — | Batch size | 128 |
+| `--train_batch_size` | — | Batch size | 512 (default) |
 | `--pruning_threshold` | — | Hard gate threshold at evaluation time | 0.5 |
 | `--log_interval` | — | Log every N batches | 100 |
 
