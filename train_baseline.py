@@ -86,9 +86,9 @@ def test():
 
 
 for epoch in range(args.epochs):
-    scheduler.step()
     train(epoch)
     acc = test()
+    scheduler.step()
 
     torch.save(model.state_dict(), os.path.join(args.logdir, "checkpoint.pth"))
 

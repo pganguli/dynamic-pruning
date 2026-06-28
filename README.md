@@ -35,6 +35,39 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### HAR dataset setup
+
+The Human Activity Recognition dataset requires two additional setup steps.
+
+**1. Copy the HAR utilities** from the upstream project's `dnn-models/deep-learning-HAR/`
+directory into a `dnn-models/` sibling of this project root:
+
+```text
+<parent-dir>/
+  dynamic-pruning/          ← this repo
+  dnn-models/
+    deep-learning-HAR/
+      utils/
+        utilities.py        ← must exist
+```
+
+**2. Download the UCI HAR Dataset** and extract it to `~/.cache/UCI HAR Dataset/`
+so that the following paths exist:
+
+```text
+~/.cache/UCI HAR Dataset/
+  train/
+    Inertial Signals/
+    y_train.txt
+  test/
+    Inertial Signals/
+    y_test.txt
+```
+
+Dataset download: <https://archive.ics.uci.edu/dataset/240/human+activity+recognition+using+smartphones>
+
+### KWS dataset setup
+
 For KWS (keyword spotting) dataset support, install the extra dependencies
 in a Python ≤ 3.12 environment (TensorFlow does not yet support Python 3.13+):
 

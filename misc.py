@@ -298,14 +298,14 @@ def prepare_data(dataset, train_batch_size):
             root="./data/cifar10", train=True, download=True, transform=transform_train
         )
         trainloader = torch.utils.data.DataLoader(
-            trainset, batch_size=train_batch_size, shuffle=True, num_workers=2
+            trainset, batch_size=train_batch_size, shuffle=True, num_workers=0
         )
 
         testset = datasets.CIFAR10(
             root="./data/cifar10", train=False, download=True, transform=transform_test
         )
         testloader = torch.utils.data.DataLoader(
-            testset, batch_size=100, shuffle=False, num_workers=2
+            testset, batch_size=100, shuffle=False, num_workers=0
         )
 
     elif dataset == "cifar100":
@@ -333,26 +333,41 @@ def prepare_data(dataset, train_batch_size):
             root="./data/cifar100", train=True, download=True, transform=transform_train
         )
         trainloader = torch.utils.data.DataLoader(
-            trainset, batch_size=train_batch_size, shuffle=True, num_workers=2
+            trainset, batch_size=train_batch_size, shuffle=True, num_workers=0
         )
 
         testset = datasets.CIFAR100(
             root="./data/cifar100", train=False, download=True, transform=transform_test
         )
         testloader = torch.utils.data.DataLoader(
-            testset, batch_size=100, shuffle=False, num_workers=2
+            testset, batch_size=100, shuffle=False, num_workers=0
         )
 
     elif dataset == "har":
         # Inspired by https://blog.csdn.net/bucan804228552/article/details/120143943
+        _har_utils = THIS_DIR.parent / "dnn-models" / "deep-learning-HAR" / "utils"
+        orig_sys_path = sys.path.copy()
         try:
-            orig_sys_path = sys.path.copy()
-            sys.path.append(
-                str(THIS_DIR.parent / "dnn-models" / "deep-learning-HAR" / "utils")
-            )
-            from utilities import read_data, standardize
+            sys.path.append(str(_har_utils))
+            try:
+                from utilities import read_data, standardize
+            except ModuleNotFoundError:
+                raise RuntimeError(
+                    f"HAR utilities not found at {_har_utils}.\n"
+                    "Copy the deep-learning-HAR/utils directory from the upstream project into\n"
+                    "  dnn-models/deep-learning-HAR/utils/\n"
+                    "so that dnn-models/deep-learning-HAR/utils/utilities.py exists.\n"
+                    "The directory should sit alongside the dynamic-pruning project root."
+                ) from None
 
             archive_dir = os.path.expanduser("~/.cache/UCI HAR Dataset")
+            if not os.path.isdir(archive_dir):
+                raise RuntimeError(
+                    f"UCI HAR Dataset not found at {archive_dir}.\n"
+                    "Download the dataset from:\n"
+                    "  https://archive.ics.uci.edu/dataset/240/human+activity+recognition+using+smartphones\n"
+                    "Extract the zip so that ~/.cache/UCI HAR Dataset/ contains train/ and test/ subdirectories."
+                )
 
             X_train_raw, train_labels, _ = read_data(archive_dir, split="train")
             _, X_train = standardize(X_train_raw, X_train_raw)
@@ -361,7 +376,7 @@ def prepare_data(dataset, train_batch_size):
                 torch.from_numpy(train_labels - 1),
             )
             trainloader = torch.utils.data.DataLoader(
-                trainset, batch_size=train_batch_size, shuffle=True, num_workers=2
+                trainset, batch_size=train_batch_size, shuffle=True, num_workers=0
             )
 
             X_test, test_labels, _ = read_data(archive_dir, split="test")
@@ -371,11 +386,11 @@ def prepare_data(dataset, train_batch_size):
                 torch.from_numpy(test_labels - 1),
             )
             testloader = torch.utils.data.DataLoader(
-                testset, batch_size=100, shuffle=False, num_workers=2
+                testset, batch_size=100, shuffle=False, num_workers=0
             )
 
         finally:
-            sys.path = orig_sys_path
+            sys.path[:] = orig_sys_path
 
     elif dataset == "kws":
         trainloader = torch.utils.data.DataLoader(
