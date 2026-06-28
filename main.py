@@ -111,7 +111,7 @@ def train(epoch):
         optimizer_gate.step()
 
         for p in gate_params:
-            p.data.clamp_(0, 5)
+            p.data.clamp_(0, 1)
 
         apply_func(model, "DecisionHead", normalize_head_weights)
 
@@ -123,7 +123,7 @@ def train(epoch):
 
         if i % args.log_interval == 0:
             concat_channels = torch.cat(selected_channels, dim=1)
-            sparsity = (concat_channels != 0).float().mean()
+            sparsity = (concat_channels > args.pruning_threshold).float().mean()
             mean_gate = concat_channels.mean()
             acc = (output.max(1)[1] == target).float().mean()
 
@@ -168,8 +168,10 @@ def test():
             concat_channels = torch.cat(selected_channels, dim=1)
 
             test_loss_ce.append(F.cross_entropy(output, target).item())
-            test_loss_reg.append(args.gamma * concat_channels.abs().sum().item())
-            test_sparsity.append((concat_channels != 0).float().mean().item())
+            test_loss_reg.append(
+                (args.gamma * (concat_channels.abs().mean() - args.sparsity_level) ** 2).item()
+            )
+            test_sparsity.append((concat_channels > args.pruning_threshold).float().mean().item())
 
             pred = output.max(1)[1]
             correct += (pred == target).float().sum().item()
