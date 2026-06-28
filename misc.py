@@ -34,7 +34,14 @@ THIS_DIR = pathlib.Path(__file__).absolute().parent
 def kws_dnn_model():
     # Clone https://github.com/ARM-software/ML-KWS-for-MCU into dnn-models/
     # to provide this file.
-    path = THIS_DIR.parent / "dnn-models" / "ML-KWS-for-MCU" / "Pretrained_models" / "DNN" / "DNN_S.pb"
+    path = (
+        THIS_DIR.parent
+        / "dnn-models"
+        / "ML-KWS-for-MCU"
+        / "Pretrained_models"
+        / "DNN"
+        / "DNN_S.pb"
+    )
     if not path.exists():
         raise FileNotFoundError(
             f"KWS frozen graph not found at {path}.\n"
@@ -179,7 +186,7 @@ def get_basic_argument_parser(default_wd: float):
     parser.add_argument("--wd", default=default_wd, type=float)
     parser.add_argument("--epochs", default=10, type=int)
     parser.add_argument("--log_interval", default=100, type=int)
-    parser.add_argument("--train_batch_size", default=128, type=int)
+    parser.add_argument("--train_batch_size", default=512, type=int)
 
     return parser
 
@@ -296,14 +303,24 @@ def prepare_data(dataset, train_batch_size):
             root="./data/cifar10", train=True, download=True, transform=transform_train
         )
         trainloader = torch.utils.data.DataLoader(
-            trainset, batch_size=train_batch_size, shuffle=True, num_workers=0
+            trainset,
+            batch_size=train_batch_size,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+            multiprocessing_context="fork",
         )
 
         testset = datasets.CIFAR10(
             root="./data/cifar10", train=False, download=True, transform=transform_test
         )
         testloader = torch.utils.data.DataLoader(
-            testset, batch_size=100, shuffle=False, num_workers=0
+            testset,
+            batch_size=100,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            multiprocessing_context="fork",
         )
 
     elif dataset == "cifar100":
@@ -331,14 +348,24 @@ def prepare_data(dataset, train_batch_size):
             root="./data/cifar100", train=True, download=True, transform=transform_train
         )
         trainloader = torch.utils.data.DataLoader(
-            trainset, batch_size=train_batch_size, shuffle=True, num_workers=0
+            trainset,
+            batch_size=train_batch_size,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+            multiprocessing_context="fork",
         )
 
         testset = datasets.CIFAR100(
             root="./data/cifar100", train=False, download=True, transform=transform_test
         )
         testloader = torch.utils.data.DataLoader(
-            testset, batch_size=100, shuffle=False, num_workers=0
+            testset,
+            batch_size=100,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            multiprocessing_context="fork",
         )
 
     elif dataset == "har":
