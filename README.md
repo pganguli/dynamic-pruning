@@ -162,7 +162,7 @@ Produces two ONNX files: a single-input model for on-device inference and a
 dynamic-batch model for accuracy evaluation.
 
 ```bash
-python export.py --arch resnet56 --dataset cifar10 --sparsity_level 0.4
+python export.py --arch resnet56 --dataset cifar10 --sparsity_level 0.4 --action_num 5
 ```
 
 Outputs: `<dataset>_<arch>-single.onnx` and `<dataset>_<arch>-batched.onnx`.
