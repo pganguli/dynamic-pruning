@@ -32,7 +32,7 @@ parser.add_argument("--pruning_threshold", default=0.5, type=float,
                     help="Hard gate threshold at evaluation time.")
 parser.add_argument("--gamma", default=1.0, type=float,
                     help="Regularization balance factor γ (Eq. 1 in Wang et al. 2020).")
-parser.add_argument("--gamma_under", default=0.1, type=float,
+parser.add_argument("--gamma_under", default=0.5, type=float,
                     help="Multiplier on gamma when sparsity is below target (prevents gate collapse).")
 parser.add_argument("--action_num", default=None, type=int,
                     help="Number of channel-selection actions m per decision unit. "
