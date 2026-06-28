@@ -112,7 +112,11 @@ def train(epoch):
         loss_ce = F.cross_entropy(output, target)
         selected_channels = default_graph.get_tensor_list("selected_channels")
         concat_channels = torch.cat(selected_channels, dim=1)
-        diff = concat_channels.abs().mean() - args.sparsity_level
+        # Differentiable approximation of fraction-above-threshold via sigmoid.
+        # Gradient is strongest on gates near the threshold, weakest far from it,
+        # so the regularizer nudges borderline channels rather than all channels.
+        soft_sparsity = torch.sigmoid(10.0 * (concat_channels - args.pruning_threshold)).mean()
+        diff = soft_sparsity - args.sparsity_level
         sparsity_frac = (concat_channels > args.pruning_threshold).float().mean()
         gamma_eff = args.gamma if sparsity_frac > args.sparsity_level else args.gamma * args.gamma_under
         loss_reg = gamma_eff * diff ** 2
@@ -180,7 +184,8 @@ def test():
 
             test_loss_ce.append(F.cross_entropy(output, target).item())
             test_sparsity_frac = (concat_channels > args.pruning_threshold).float().mean()
-            test_diff = concat_channels.abs().mean() - args.sparsity_level
+            test_soft_sparsity = torch.sigmoid(10.0 * (concat_channels - args.pruning_threshold)).mean()
+            test_diff = test_soft_sparsity - args.sparsity_level
             test_gamma_eff = args.gamma if test_sparsity_frac > args.sparsity_level else args.gamma * args.gamma_under
             test_loss_reg.append((test_gamma_eff * test_diff ** 2).item())
             test_sparsity.append(test_sparsity_frac.item())

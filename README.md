@@ -191,23 +191,24 @@ linearly over `--epochs`, matching the paper's Implementation Details section.
 The regularization loss is asymmetric around the target sparsity `r`:
 
 ```text
-sparsity_frac = fraction of gates above pruning_threshold
+soft_sparsity = sigmoid(10 · (gate − pruning_threshold)) averaged over all gates
+sparsity_frac = fraction of gates strictly above pruning_threshold  (non-differentiable)
 
 γ_eff = γ            if sparsity_frac > r   (above target: push down hard)
 γ_eff = γ · γ_under  if sparsity_frac ≤ r  (below target: push up gently)
 
-L_reg = γ_eff · (mean_gate − r)²
+L_reg = γ_eff · (soft_sparsity − r)²
 ```
 
-The asymmetry decision uses `sparsity_frac` (the threshold-gated fraction of
-active channels — what actually matters for inference cost) while the gradient
-flows through `mean_gate` (differentiable). This ensures the model is never
-penalized lightly when it is genuinely above the sparsity target, even when
-the soft gate mean has not yet caught up. When below target, the weaker
-pressure lets the cross-entropy loss dominate, so the model uses as many
-channels as accuracy justifies up to the budget `r`. `--gamma_under 0.0`
-disables upward pressure entirely (risks gate collapse); `--gamma_under 1.0`
-restores a fully symmetric penalty.
+`soft_sparsity` is a differentiable sigmoid approximation of `sparsity_frac`.
+The sigmoid gradient is largest for gates near `pruning_threshold`, so the
+regularizer nudges borderline channels rather than applying uniform pressure
+across all gates. The asymmetry decision still uses the hard `sparsity_frac`
+to ensure the correct penalty direction even when the soft approximation lags.
+When below target, the weaker pressure lets the cross-entropy loss dominate,
+so the model uses as many channels as accuracy justifies up to the budget `r`.
+`--gamma_under 0.0` disables upward pressure entirely (risks gate collapse);
+`--gamma_under 1.0` restores a fully symmetric penalty.
 
 ## Deviations from the paper
 
