@@ -88,6 +88,13 @@ optimizer_model = torch.optim.SGD(
     weight_decay=args.wd,
 )
 
+scheduler_gate = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer_gate, T_max=args.epochs, eta_min=_lr * 1e-2
+)
+scheduler_model = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer_model, T_max=args.epochs, eta_min=_lr * 1e-2
+)
+
 
 def train(epoch):
     model.train()
@@ -216,6 +223,8 @@ for epoch in range(args.epochs):
 
     train(epoch)
     acc, sparsity = test()
+    scheduler_gate.step()
+    scheduler_model.step()
 
     on_target = (args.sparsity_level - _SPARSITY_TOL) <= sparsity <= args.sparsity_level
     if on_target and acc > best_acc:
