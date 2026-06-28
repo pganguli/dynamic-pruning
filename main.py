@@ -26,17 +26,23 @@ np.set_printoptions(precision=2, linewidth=160)
 print = misc.logger.info
 
 parser = misc.get_basic_argument_parser(default_wd=1e-9)
-parser.add_argument("--lambd", default=1.0, type=float)
+parser.add_argument("--gamma", default=1.0, type=float,
+                    help="Regularization balance factor γ (Eq. 1 in Wang et al. 2020).")
+parser.add_argument("--action_num", default=None, type=int,
+                    help="Number of channel-selection actions m per decision unit. "
+                         "Defaults to architecture-specific value (5 for HAR/KWS, 40 for ResNet).")
 
 args = parser.parse_args()
 
 args.num_classes = {"cifar10": 10, "cifar100": 100, "har": 6, "kws": 12}.get(args.dataset, 10)
+if args.action_num is None:
+    args.action_num = misc.action_num(args.arch)
 
 args.device = "cuda"
 torch.backends.cudnn.benchmark = True
 
 args.logdir = "decision-%d/%s-%s/sparsity-%.2f" % (
-    misc.action_num(args.arch),
+    args.action_num,
     args.dataset,
     args.arch,
     args.sparsity_level,
@@ -59,7 +65,7 @@ model.load_state_dict(
     )
 )
 
-misc.transform_model(model, args.arch, misc.action_num(args.arch))
+misc.transform_model(model, args.arch, args.action_num)
 
 model = model.to(args.device)
 
@@ -91,7 +97,7 @@ def train(epoch):
         loss_ce = F.cross_entropy(output, target)
         selected_channels = default_graph.get_tensor_list("selected_channels")
         loss_reg = (
-            args.lambd
+            args.gamma
             * (torch.cat(selected_channels, dim=1).abs().mean() - args.sparsity_level)
             ** 2
         )
@@ -158,7 +164,7 @@ def test():
             concat_channels = torch.cat(selected_channels, dim=1)
 
             test_loss_ce.append(F.cross_entropy(output, target).item())
-            test_loss_reg.append(args.lambd * concat_channels.abs().sum().item())
+            test_loss_reg.append(args.gamma * concat_channels.abs().sum().item())
             test_sparsity.append((concat_channels != 0).float().mean().item())
 
             pred = output.max(1)[1]
@@ -188,11 +194,12 @@ def save_checkpoint(state, filepath):
     torch.save(state, os.path.join(filepath, "checkpoint.pth.tar"))
 
 
-_T_START = 1.0
-_T_END = 0.1
+_T_START = 5.0
+_T_END = 0.5
 
 for epoch in range(args.epochs):
-    temperature = _T_START * (_T_END / _T_START) ** (epoch / max(args.epochs - 1, 1))
+    # Linear temperature annealing (Wang et al. 2020, Implementation Details)
+    temperature = _T_START + (_T_END - _T_START) * epoch / max(args.epochs - 1, 1)
     default_graph.clear_tensor_list("temperature")
     default_graph.append_tensor("temperature", temperature)
 
