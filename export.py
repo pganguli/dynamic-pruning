@@ -30,7 +30,8 @@ def optimize_model(pytorch_exported_model: IO[bytes], model_name: str):
     onnx_model = onnx.load_model(pytorch_exported_model)
     onnx_model = onnx.shape_inference.infer_shapes(onnx_model)
     onnx_model = onnxoptimizer.optimize(onnx_model)
-    onnx_model = onnxsim.simplify(onnx_model)  # 0.5+ returns model directly, raises on failure
+    result = onnxsim.simplify(onnx_model)
+    onnx_model = result[0] if isinstance(result, tuple) else result
     onnx.save_model(onnx_model, model_name)
 
 
