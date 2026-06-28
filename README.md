@@ -220,4 +220,5 @@ the reported results, but are worth being aware of.
 | 1 | Default `--action_num` for ResNet | 5 (CIFAR-10), 40 (ImageNet) | 40 if not specified | Always pass `--action_num 5` for CIFAR-10 experiments |
 | 2 | Default `--epochs` | 100 | 10 | Always pass `--epochs 100` explicitly |
 | 3 | Gate clamping | Not mentioned | Gates clamped to [0, 1] after each Adam step | Forces gate mean to represent fraction of active channels |
-| 4 | Supported architectures | VGG16-BN, ResNet-56/50 | ResNet variants, HAR-CNN, KWS-CNN | VGG-family models not available |
+| 4 | Regularization strength `--gamma` | 1.0 (paper) | 2.2 (empirically tuned) | Paper value causes slow sparsity convergence with batch 512; increase if sparsity takes many epochs to reach target |
+| 5 | Supported architectures | VGG16-BN, ResNet-56/50 | ResNet variants, HAR-CNN, KWS-CNN | VGG-family models not available |
