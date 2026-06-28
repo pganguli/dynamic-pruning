@@ -175,13 +175,11 @@ def get_basic_argument_parser(default_wd: float):
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="kws", type=str)
     parser.add_argument("--arch", "-a", default="kws", type=str)
-    parser.add_argument("--sparsity_level", default=0.1, type=float)
     parser.add_argument("--mm", default=0.9, type=float)
     parser.add_argument("--wd", default=default_wd, type=float)
     parser.add_argument("--epochs", default=10, type=int)
     parser.add_argument("--log_interval", default=100, type=int)
     parser.add_argument("--train_batch_size", default=128, type=int)
-    parser.add_argument("--pruning_threshold", default=0.5, type=float)
 
     return parser
 

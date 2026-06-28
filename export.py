@@ -37,6 +37,8 @@ def optimize_model(pytorch_exported_model: IO[bytes], model_name: str):
 def main():
     # No training involved - use dummy values to wd
     parser = misc.get_basic_argument_parser(default_wd=0)
+    parser.add_argument("--sparsity_level", default=0.1, type=float)
+    parser.add_argument("--pruning_threshold", default=0.5, type=float)
     args = parser.parse_args()
 
     args.num_classes = {"cifar10": 10, "cifar100": 100, "har": 6, "kws": 12}.get(args.dataset, 10)

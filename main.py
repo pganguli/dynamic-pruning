@@ -26,6 +26,10 @@ np.set_printoptions(precision=2, linewidth=160)
 print = misc.logger.info
 
 parser = misc.get_basic_argument_parser(default_wd=1e-9)
+parser.add_argument("--sparsity_level", default=0.1, type=float,
+                    help="Target fraction of channels to keep active (r in paper).")
+parser.add_argument("--pruning_threshold", default=0.5, type=float,
+                    help="Hard gate threshold at evaluation time.")
 parser.add_argument("--gamma", default=1.0, type=float,
                     help="Regularization balance factor γ (Eq. 1 in Wang et al. 2020).")
 parser.add_argument("--action_num", default=None, type=int,
