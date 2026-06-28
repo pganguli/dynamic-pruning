@@ -174,6 +174,7 @@ Outputs: `<dataset>_<arch>-single.onnx` and `<dataset>_<arch>-batched.onnx`.
 |---|---|---|---|
 | `--sparsity_level` | *r* | Target fraction of channels to keep active | 0.4 |
 | `--gamma` | *γ* | Regularization balance factor (Eq. 1) | 1.0 |
+| `--gamma_under` | — | Fraction of γ applied when sparsity is *below* target (see below) | 0.7 |
 | `--action_num` | *m* | Channel-selection masks per decision unit | 5 |
 | `--epochs` | — | Training epochs | 400 (Stage 2 @ batch 512), 160 (Stages 1 & 3) |
 | `--mm` | — | SGD momentum for backbone optimizer | 0.9 |
@@ -184,6 +185,23 @@ Outputs: `<dataset>_<arch>-single.onnx` and `<dataset>_<arch>-batched.onnx`.
 
 Temperature τ is not a CLI flag — it is annealed automatically from 5.0 to 0.5
 linearly over `--epochs`, matching the paper's Implementation Details section.
+
+### Asymmetric sparsity regularizer
+
+The regularization loss is asymmetric around the target sparsity `r`:
+
+```text
+γ_eff = γ            if mean_gate > r   (above target: push down hard)
+γ_eff = γ · γ_under  if mean_gate ≤ r  (below target: push up gently)
+
+L_reg = γ_eff · (mean_gate − r)²
+```
+
+This ensures sparsity converges to the target from below rather than oscillating
+around it. When below target, the weaker pressure lets the cross-entropy loss
+dominate, so the model uses as many channels as accuracy justifies up to the
+budget `r`. `--gamma_under 0.0` disables upward pressure entirely (risks gate
+collapse); `--gamma_under 1.0` restores the original symmetric penalty.
 
 ## Deviations from the paper
 
