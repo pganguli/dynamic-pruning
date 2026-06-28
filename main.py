@@ -222,6 +222,8 @@ _T_END = 0.5
 _SPARSITY_TOL = 0.05   # must be within this of target to be considered for best
 
 best_acc = 0.0
+best_sparsity_dist = float("inf")  # fallback: closest sparsity to target seen so far
+ever_on_target = False
 
 for epoch in range(args.epochs):
     # Linear temperature annealing (Wang et al. 2020, Implementation Details)
@@ -235,8 +237,20 @@ for epoch in range(args.epochs):
     scheduler_model.step()
 
     on_target = (args.sparsity_level - _SPARSITY_TOL) <= sparsity <= args.sparsity_level
-    if on_target and acc > best_acc:
-        best_acc = acc
+    sparsity_dist = abs(sparsity - args.sparsity_level)
+
+    if on_target:
+        ever_on_target = True
+
+    should_save = (
+        (on_target and acc > best_acc) or
+        (not ever_on_target and sparsity_dist < best_sparsity_dist)
+    )
+
+    if should_save:
+        if on_target:
+            best_acc = acc
+        best_sparsity_dist = sparsity_dist
         save_checkpoint(
             {
                 "epoch": epoch,
@@ -244,9 +258,10 @@ for epoch in range(args.epochs):
             },
             filepath=args.logdir,
         )
+        label = "New best" if on_target else "Closest to target so far (no on-target epoch yet)"
         print(
-            "New best @ Epoch %d, Accuracy = %.4f, Sparsity = %.4f — checkpoint saved\n"
-            % (epoch, acc, sparsity)
+            "%s @ Epoch %d, Accuracy = %.4f, Sparsity = %.4f — checkpoint saved\n"
+            % (label, epoch, acc, sparsity)
         )
     else:
         reason = "" if on_target else " (sparsity off-target)"
