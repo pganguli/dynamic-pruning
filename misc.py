@@ -19,9 +19,6 @@ import pathlib
 import numpy as np
 from torch.utils.data import TensorDataset
 import sys
-import filelock
-import platformdirs
-import torchaudio
 
 import models
 from decision import (
@@ -248,6 +245,10 @@ def preprocess_kws_dataset(original_dataset):
 
 
 def load_data_google_speech(train: bool):
+    import filelock
+    import platformdirs
+    import torchaudio  # noqa: F401 — torchaudio.datasets used below
+
     xdg_cache_home = platformdirs.user_cache_path()
     with filelock.FileLock(xdg_cache_home / "SpeechCommands.lock"):
         split = "train" if train else "test"

@@ -1,0 +1,16 @@
+# Extra dependencies for KWS (keyword spotting) dataset preprocessing.
+#
+# tensorflow is used once to run the ARM ML-KWS-for-MCU frozen graph and
+# compute MFCCs from the raw Speech Commands audio. After the first run the
+# results are cached and tensorflow is no longer needed.
+#
+# Install with: pip install -r requirements-kws.txt
+#
+# Note: TensorFlow does not publish wheels for Python 3.13+. If your
+# environment is too new, consider using a Python 3.11 or 3.12 venv just
+# for the preprocessing step, or building the cache on another machine and
+# copying the .pth files from ~/.cache/.
+tensorflow>=2.12,<3
+filelock>=3.13
+platformdirs>=4.0
+torchaudio>=2.3

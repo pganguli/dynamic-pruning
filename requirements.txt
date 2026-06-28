@@ -1,14 +1,8 @@
-onnx==1.16.1
-onnxoptimizer==0.3.13
-onnxruntime==1.18.0
-onnxsim==0.4.36
-torch==2.3.0
-torchaudio==2.3.0
-torchvision==0.18.0
-# KWS MFCC preprocessing
-tensorflow>=2.12,<3
-# KWS dataset cache helpers
-filelock>=3.13
-platformdirs>=4.0
+onnx>=1.16
+onnxoptimizer>=0.3.13
+onnxruntime>=1.18
+onnxsim>=0.4.36
+torch>=2.3
+torchvision>=0.18
 # pandas needed for deep-learning-HAR
 pandas==2.2.1
