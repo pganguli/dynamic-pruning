@@ -204,6 +204,8 @@ def save_checkpoint(state, filepath):
 
 _T_START = 5.0
 _T_END = 0.5
+_SPARSITY_TOL = 0.05   # must be within this of target to be considered for best
+
 best_acc = 0.0
 
 for epoch in range(args.epochs):
@@ -215,7 +217,8 @@ for epoch in range(args.epochs):
     train(epoch)
     acc, sparsity = test()
 
-    if acc > best_acc:
+    on_target = abs(sparsity - args.sparsity_level) <= _SPARSITY_TOL
+    if on_target and acc > best_acc:
         best_acc = acc
         save_checkpoint(
             {
@@ -229,7 +232,8 @@ for epoch in range(args.epochs):
             % (epoch, acc, sparsity)
         )
     else:
+        reason = "" if on_target else " (sparsity off-target)"
         print(
-            "Epoch %d, Accuracy = %.4f, Sparsity = %.4f (best = %.4f)\n"
-            % (epoch, acc, sparsity, best_acc)
+            "Epoch %d, Accuracy = %.4f, Sparsity = %.4f (best = %.4f)%s\n"
+            % (epoch, acc, sparsity, best_acc, reason)
         )
