@@ -21,6 +21,8 @@ parser = misc.get_basic_argument_parser(default_wd=1e-4)
 args = parser.parse_args()
 
 args.num_classes = {"cifar10": 10, "cifar100": 100, "har": 6, "kws": 12}.get(args.dataset, 10)
+if args.lr is None:
+    args.lr = misc.learning_rate(args.arch)
 
 args.device = "cuda"
 torch.backends.cudnn.benchmark = True
@@ -34,11 +36,9 @@ model = misc.initialize_model(args.dataset, args.arch, args.num_classes)
 
 model = model.to(args.device)
 
-_lr = args.lr if args.lr is not None else misc.learning_rate(args.arch)
-
 optimizer = torch.optim.SGD(
     model.parameters(),
-    lr=_lr,
+    lr=args.lr,
     momentum=args.mm,
     weight_decay=args.wd,
 )

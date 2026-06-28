@@ -41,6 +41,8 @@ args = parser.parse_args()
 args.num_classes = {"cifar10": 10, "cifar100": 100, "har": 6, "kws": 12}.get(args.dataset, 10)
 if args.action_num is None:
     args.action_num = misc.action_num(args.arch)
+if args.lr is None:
+    args.lr = misc.learning_rate(args.arch)
 
 args.device = "cuda"
 torch.backends.cudnn.benchmark = True
@@ -76,23 +78,21 @@ model = model.to(args.device)
 head_params = default_graph.get_tensor_list("head_params")
 gate_params = default_graph.get_tensor_list("gate_params")
 
-_lr = args.lr if args.lr is not None else misc.learning_rate(args.arch)
-
 optimizer_gate = torch.optim.Adam(
-    head_params + gate_params, lr=_lr
+    head_params + gate_params, lr=args.lr
 )
 optimizer_model = torch.optim.SGD(
     model_params,
-    lr=_lr,
+    lr=args.lr,
     momentum=args.mm,
     weight_decay=args.wd,
 )
 
 scheduler_gate = torch.optim.lr_scheduler.CosineAnnealingLR(
-    optimizer_gate, T_max=args.epochs, eta_min=_lr * 1e-2
+    optimizer_gate, T_max=args.epochs, eta_min=args.lr * 1e-2
 )
 scheduler_model = torch.optim.lr_scheduler.CosineAnnealingLR(
-    optimizer_model, T_max=args.epochs, eta_min=_lr * 1e-2
+    optimizer_model, T_max=args.epochs, eta_min=args.lr * 1e-2
 )
 
 
