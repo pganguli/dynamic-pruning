@@ -109,21 +109,20 @@ The Gumbel-softmax temperature is annealed linearly from τ=5.0 to τ=0.5 over
 training, following the paper.
 
 ```bash
-# Paper settings for CIFAR-10 / ResNet-56
-# With default batch size 512, use ~400 epochs to match the paper's gradient step count
+# CIFAR-10 / ResNet-56 (batch 512, ~400 epochs to match paper's gradient step count)
 python main.py --arch resnet56 --dataset cifar10 \
     --sparsity_level 0.4 \
-    --gamma 1.0 \
+    --gamma 2.2 \
     --action_num 5 \
     --epochs 400
 
 # HAR
 python main.py --arch har_cnn --dataset har \
-    --sparsity_level 0.5 --gamma 1.0 --epochs 100
+    --sparsity_level 0.5 --gamma 2.2 --epochs 100
 
 # KWS
 python main.py --arch kws --dataset kws \
-    --sparsity_level 0.5 --gamma 1.0 --epochs 100
+    --sparsity_level 0.5 --gamma 2.2 --epochs 100
 ```
 
 Checkpoints saved to `logs/decision-<m>/<dataset>-<arch>/sparsity-<r>/checkpoint.pth.tar`.
@@ -154,7 +153,7 @@ weights to recover any accuracy lost during Stage 2.
 
 ```bash
 python finetune.py --arch resnet56 --dataset cifar10 \
-    --sparsity_level 0.4 --epochs 160
+    --sparsity_level 0.4 --action_num 5 --epochs 160
 ```
 
 ### Stage 4 — Export to ONNX
@@ -173,7 +172,7 @@ Outputs: `<dataset>_<arch>-single.onnx` and `<dataset>_<arch>-batched.onnx`.
 | CLI flag | Paper symbol | Meaning | Paper value (CIFAR-10/ResNet-56) |
 |---|---|---|---|
 | `--sparsity_level` | *r* | Target fraction of channels to keep active | 0.4 |
-| `--gamma` | *γ* | Regularization balance factor (Eq. 1) | 1.0 |
+| `--gamma` | *γ* | Regularization balance factor (Eq. 1) | 2.2 |
 | `--gamma_under` | — | Fraction of γ applied when sparsity is *below* target (see below) | 0.7 |
 | `--action_num` | *m* | Channel-selection masks per decision unit | 5 |
 | `--epochs` | — | Training epochs | 400 (Stage 2 @ batch 512), 160 (Stages 1 & 3) |
