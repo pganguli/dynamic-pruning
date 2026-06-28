@@ -32,6 +32,8 @@ parser.add_argument("--pruning_threshold", default=0.5, type=float,
                     help="Hard gate threshold at evaluation time.")
 parser.add_argument("--gamma", default=1.0, type=float,
                     help="Regularization balance factor γ (Eq. 1 in Wang et al. 2020).")
+parser.add_argument("--gamma_under", default=0.1, type=float,
+                    help="Multiplier on gamma when sparsity is below target (prevents gate collapse).")
 parser.add_argument("--action_num", default=None, type=int,
                     help="Number of channel-selection actions m per decision unit. "
                          "Defaults to architecture-specific value (5 for HAR/KWS, 40 for ResNet).")
@@ -110,7 +112,7 @@ def train(epoch):
         loss_ce = F.cross_entropy(output, target)
         selected_channels = default_graph.get_tensor_list("selected_channels")
         diff = torch.cat(selected_channels, dim=1).abs().mean() - args.sparsity_level
-        gamma_eff = args.gamma if diff > 0 else args.gamma * 0.1
+        gamma_eff = args.gamma if diff > 0 else args.gamma * args.gamma_under
         loss_reg = gamma_eff * diff ** 2
         loss = loss_ce + loss_reg
 
@@ -176,7 +178,7 @@ def test():
 
             test_loss_ce.append(F.cross_entropy(output, target).item())
             test_diff = concat_channels.abs().mean() - args.sparsity_level
-            test_gamma_eff = args.gamma if test_diff > 0 else args.gamma * 0.1
+            test_gamma_eff = args.gamma if test_diff > 0 else args.gamma * args.gamma_under
             test_loss_reg.append((test_gamma_eff * test_diff ** 2).item())
             test_sparsity.append((concat_channels > args.pruning_threshold).float().mean().item())
 
