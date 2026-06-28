@@ -217,7 +217,7 @@ for epoch in range(args.epochs):
     train(epoch)
     acc, sparsity = test()
 
-    on_target = abs(sparsity - args.sparsity_level) <= _SPARSITY_TOL
+    on_target = (args.sparsity_level - _SPARSITY_TOL) <= sparsity <= args.sparsity_level
     if on_target and acc > best_acc:
         best_acc = acc
         save_checkpoint(
