@@ -191,17 +191,23 @@ linearly over `--epochs`, matching the paper's Implementation Details section.
 The regularization loss is asymmetric around the target sparsity `r`:
 
 ```text
-γ_eff = γ            if mean_gate > r   (above target: push down hard)
-γ_eff = γ · γ_under  if mean_gate ≤ r  (below target: push up gently)
+sparsity_frac = fraction of gates above pruning_threshold
+
+γ_eff = γ            if sparsity_frac > r   (above target: push down hard)
+γ_eff = γ · γ_under  if sparsity_frac ≤ r  (below target: push up gently)
 
 L_reg = γ_eff · (mean_gate − r)²
 ```
 
-This ensures sparsity converges to the target from below rather than oscillating
-around it. When below target, the weaker pressure lets the cross-entropy loss
-dominate, so the model uses as many channels as accuracy justifies up to the
-budget `r`. `--gamma_under 0.0` disables upward pressure entirely (risks gate
-collapse); `--gamma_under 1.0` restores the original symmetric penalty.
+The asymmetry decision uses `sparsity_frac` (the threshold-gated fraction of
+active channels — what actually matters for inference cost) while the gradient
+flows through `mean_gate` (differentiable). This ensures the model is never
+penalized lightly when it is genuinely above the sparsity target, even when
+the soft gate mean has not yet caught up. When below target, the weaker
+pressure lets the cross-entropy loss dominate, so the model uses as many
+channels as accuracy justifies up to the budget `r`. `--gamma_under 0.0`
+disables upward pressure entirely (risks gate collapse); `--gamma_under 1.0`
+restores a fully symmetric penalty.
 
 ## Deviations from the paper
 
