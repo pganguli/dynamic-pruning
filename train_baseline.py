@@ -85,11 +85,15 @@ def test():
     return acc
 
 
+best_acc = 0.0
 for epoch in range(args.epochs):
     train(epoch)
     acc = test()
     scheduler.step()
 
-    torch.save(model.state_dict(), os.path.join(args.logdir, "checkpoint.pth"))
+    if acc > best_acc:
+        best_acc = acc
+        torch.save(model.state_dict(), os.path.join(args.logdir, "checkpoint.pth"))
+        print("  -> New best accuracy {:.4f}, checkpoint saved.".format(best_acc))
 
-print("Final saved model test accuracy = %.4f" % acc)
+print("Best saved model test accuracy = %.4f" % best_acc)

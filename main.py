@@ -196,6 +196,7 @@ def save_checkpoint(state, filepath):
 
 _T_START = 5.0
 _T_END = 0.5
+best_acc = 0.0
 
 for epoch in range(args.epochs):
     # Linear temperature annealing (Wang et al. 2020, Implementation Details)
@@ -206,15 +207,21 @@ for epoch in range(args.epochs):
     train(epoch)
     acc, sparsity = test()
 
-    print(
-        "Save best checkpoint @ Epoch %d, Accuracy = %.4f, Sparsity = %.4f\n"
-        % (epoch, acc, sparsity)
-    )
-
-    save_checkpoint(
-        {
-            "epoch": epoch,
-            "state_dict": model.state_dict(),
-        },
-        filepath=args.logdir,
-    )
+    if acc > best_acc:
+        best_acc = acc
+        save_checkpoint(
+            {
+                "epoch": epoch,
+                "state_dict": model.state_dict(),
+            },
+            filepath=args.logdir,
+        )
+        print(
+            "New best @ Epoch %d, Accuracy = %.4f, Sparsity = %.4f — checkpoint saved\n"
+            % (epoch, acc, sparsity)
+        )
+    else:
+        print(
+            "Epoch %d, Accuracy = %.4f, Sparsity = %.4f (best = %.4f)\n"
+            % (epoch, acc, sparsity, best_acc)
+        )
