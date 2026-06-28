@@ -39,11 +39,19 @@ def main():
     parser = misc.get_basic_argument_parser(default_wd=0)
     parser.add_argument("--sparsity_level", default=0.1, type=float)
     parser.add_argument("--pruning_threshold", default=0.5, type=float)
+    parser.add_argument("--action_num", default=None, type=int,
+                        help="Must match the value used in Stage 2. "
+                             "Defaults to architecture-specific value.")
     args = parser.parse_args()
 
     args.num_classes = {"cifar10": 10, "cifar100": 100, "har": 6, "kws": 12}.get(args.dataset, 10)
+    if args.action_num is None:
+        args.action_num = misc.action_num(args.arch)
+    if args.lr is None:
+        args.lr = 0.0
+
     args.logdir = "decision-%d/%s-%s/sparsity-%.2f" % (
-        misc.action_num(args.arch),
+        args.action_num,
         args.dataset,
         args.arch,
         args.sparsity_level,
@@ -59,7 +67,7 @@ def main():
         weights_only=True,
     )
 
-    misc.transform_model(model, args.arch, misc.action_num(args.arch))
+    misc.transform_model(model, args.arch, args.action_num)
 
     model.eval()
     apply_func(model, "DecisionHead", set_deterministic_value, deterministic=True)
