@@ -5,7 +5,24 @@ Loads a pre-trained checkpoint from logs/pretrained/ and jointly trains the
 pruning decision heads and the backbone network with a sparsity-regularisation term.
 Requires a CUDA-capable GPU.
 
-Usage: python train/main.py --arch resnet10 --dataset cifar10 [--sparsity_level 0.5]
+Static mode (default):
+  A single target keep-fraction --sparsity_level is used throughout training.
+  The model learns to select channels such that mean realized density ≈ r.
+
+Dynamic mode (--dynamic):
+  A per-batch target keep-fraction r_tgt is sampled uniformly in [r_min, r_max]
+  and fed to the conditioned action head, producing a model that follows r_tgt
+  at inference time. This trains a single shared-weight model covering a range
+  of operating points.
+
+Usage:
+  # Static (single operating point)
+  python main.py --arch resnet56 --dataset cifar10 --sparsity_level 0.4 \
+      --gamma 2.2 --action_num 16 --epochs 400
+
+  # Dynamic (knob model)
+  python main.py --arch resnet56 --dataset cifar10 --dynamic \
+      --r_min 0.3 --r_max 0.7 --gamma 2.2 --action_num 16 --epochs 400
 """
 
 import torch.nn.functional as F
@@ -26,21 +43,79 @@ np.set_printoptions(precision=2, linewidth=160)
 print = misc.logger.info
 
 parser = misc.get_basic_argument_parser(default_wd=1e-9)
-parser.add_argument("--sparsity_level", default=0.1, type=float,
-                    help="Target fraction of channels to keep active (r in paper).")
-parser.add_argument("--pruning_threshold", default=0.5, type=float,
-                    help="Hard gate threshold at evaluation time.")
-parser.add_argument("--gamma", default=1.0, type=float,
-                    help="Regularization balance factor γ (Eq. 1 in Wang et al. 2020).")
-parser.add_argument("--gamma_under", default=0.7, type=float,
-                    help="Multiplier on gamma when sparsity is below target (prevents gate collapse).")
-parser.add_argument("--action_num", default=None, type=int,
-                    help="Number of channel-selection actions m per decision unit. "
-                         "Defaults to architecture-specific value (5 for HAR/KWS, 40 for ResNet).")
+parser.add_argument(
+    "--sparsity_level",
+    default=0.1,
+    type=float,
+    help="Target fraction of channels to keep active (r in paper). "
+    "Used as the single operating point in static mode, and as "
+    "the r_tgt constant fed to the conditioned head when not in "
+    "dynamic mode.",
+)
+parser.add_argument(
+    "--pruning_threshold",
+    default=0.5,
+    type=float,
+    help="Hard gate threshold at evaluation time.",
+)
+parser.add_argument(
+    "--gamma",
+    default=1.0,
+    type=float,
+    help="Regularization balance factor γ (Eq. 1 in Wang et al. 2020).",
+)
+parser.add_argument(
+    "--gamma_under",
+    default=0.7,
+    type=float,
+    help="Multiplier on gamma when sparsity is below target (static "
+    "mode only; prevents gate collapse). Ignored in --dynamic mode "
+    "where symmetric tracking is used.",
+)
+parser.add_argument(
+    "--action_num",
+    default=None,
+    type=int,
+    help="Number of channel-selection actions m per decision unit. "
+    "Defaults to architecture-specific value (5 for HAR/KWS, 40 "
+    "for ResNet). Use 16 for dynamic-target training.",
+)
+# Dynamic target arguments
+parser.add_argument(
+    "--dynamic",
+    action="store_true",
+    default=False,
+    help="Enable dynamic-target mode: sample r_tgt per batch in "
+    "[r_min, r_max] and feed it to the conditioned action head. "
+    "Produces a single model that can trade accuracy for MACs at "
+    "inference time by varying r_tgt.",
+)
+parser.add_argument(
+    "--r_min",
+    default=0.3,
+    type=float,
+    help="Lower bound of r_tgt training range (dynamic mode).",
+)
+parser.add_argument(
+    "--r_max",
+    default=0.7,
+    type=float,
+    help="Upper bound of r_tgt training range (dynamic mode).",
+)
+parser.add_argument(
+    "--r_endpoint_prob",
+    default=0.1,
+    type=float,
+    help="Per-sample probability of oversampling an endpoint (r_min or "
+    "r_max) instead of uniform-sampling r_tgt. Ensures extreme "
+    "operating points are well trained.",
+)
 
 args = parser.parse_args()
 
-args.num_classes = {"cifar10": 10, "cifar100": 100, "har": 6, "kws": 12}.get(args.dataset, 10)
+args.num_classes = {"cifar10": 10, "cifar100": 100, "har": 6, "kws": 12}.get(
+    args.dataset, 10
+)
 if args.action_num is None:
     args.action_num = misc.action_num(args.arch)
 if args.lr is None:
@@ -61,9 +136,9 @@ trainloader, testloader = misc.prepare_data(args.dataset, args.train_batch_size)
 
 model = misc.initialize_model(args.dataset, args.arch, args.num_classes)
 
-model_params = []
-for p in model.parameters():
-    model_params.append(p)
+# Collect backbone params *before* transform_model injects decision heads so
+# that head/gate params stay out of optimizer_model (SGD).
+model_params = list(model.parameters())
 
 print("==> Loading pretrained model...")
 model.load_state_dict(
@@ -73,16 +148,14 @@ model.load_state_dict(
     )
 )
 
-misc.transform_model(model, args.arch, args.action_num)
+misc.transform_model(model, args.arch, args.action_num, d_embed=args.d_embed)
 
 model = model.to(args.device)
 
 head_params = default_graph.get_tensor_list("head_params")
 gate_params = default_graph.get_tensor_list("gate_params")
 
-optimizer_gate = torch.optim.Adam(
-    head_params + gate_params, lr=args.lr
-)
+optimizer_gate = torch.optim.Adam(head_params + gate_params, lr=args.lr)
 optimizer_model = torch.optim.SGD(
     model_params,
     lr=args.lr,
@@ -98,6 +171,28 @@ scheduler_model = torch.optim.lr_scheduler.CosineAnnealingLR(
 )
 
 
+def _sample_r_tgt(batch_size):
+    """Sample per-sample r_tgt for a batch (dynamic mode).
+
+    Draws uniformly in [r_min, r_max], then with probability r_endpoint_prob
+    replaces some samples with exactly r_min or r_max so extreme operating
+    points are well covered.
+    """
+    r_tgt = torch.empty(batch_size, 1, device=args.device).uniform_(
+        args.r_min, args.r_max
+    )
+    if args.r_endpoint_prob > 0:
+        is_endpoint = torch.rand(batch_size, device=args.device) < args.r_endpoint_prob
+        which_end = torch.rand(batch_size, device=args.device) < 0.5
+        endpoints = torch.where(
+            which_end,
+            torch.full((batch_size,), args.r_min, device=args.device),
+            torch.full((batch_size,), args.r_max, device=args.device),
+        )
+        r_tgt[:, 0] = torch.where(is_endpoint, endpoints, r_tgt[:, 0])
+    return r_tgt
+
+
 def train(epoch):
     model.train()
     apply_func(model, "DecisionHead", set_deterministic_value, deterministic=False)
@@ -106,20 +201,42 @@ def train(epoch):
 
         data = data.to(args.device)
         target = target.to(args.device)
+        B = data.shape[0]
 
+        # --- set r_tgt for this batch (both forward passes share it) ---
+        if args.dynamic:
+            r_tgt = _sample_r_tgt(B)
+        else:
+            r_tgt = torch.full((B, 1), args.sparsity_level, device=args.device)
+        default_graph.append_tensor("r_tgt", r_tgt)
+
+        # --- gate / head optimizer step ---
         optimizer_gate.zero_grad()
         output = model(data)
         loss_ce = F.cross_entropy(output, target)
+
         selected_channels = default_graph.get_tensor_list("selected_channels")
-        concat_channels = torch.cat(selected_channels, dim=1)
-        # Differentiable approximation of fraction-above-threshold via sigmoid.
-        # Gradient is strongest on gates near the threshold, weakest far from it,
-        # so the regularizer nudges borderline channels rather than all channels.
-        soft_sparsity = torch.sigmoid(10.0 * (concat_channels - args.pruning_threshold)).mean()
-        diff = soft_sparsity - args.sparsity_level
-        sparsity_frac = (concat_channels > args.pruning_threshold).float().mean()
-        gamma_eff = args.gamma if sparsity_frac > args.sparsity_level else args.gamma * args.gamma_under
-        loss_reg = gamma_eff * diff ** 2
+        concat_channels = torch.cat(selected_channels, dim=1)  # [B, sum_C]
+
+        # Sigmoid soft-sparsity: differentiable proxy for fraction-above-threshold.
+        # In dynamic mode: per-sample density [B,1] vs per-sample r_tgt [B,1].
+        # In static mode: scalar density vs scalar sparsity_level (asymmetric).
+        soft = torch.sigmoid(10.0 * (concat_channels - args.pruning_threshold))
+
+        if args.dynamic:
+            d = soft.mean(dim=1, keepdim=True)  # [B, 1] per-sample realized density
+            loss_reg = args.gamma * ((d - r_tgt) ** 2).mean()
+        else:
+            soft_sparsity = soft.mean()  # scalar
+            diff = soft_sparsity - args.sparsity_level
+            sparsity_frac = (concat_channels > args.pruning_threshold).float().mean()
+            gamma_eff = (
+                args.gamma
+                if sparsity_frac > args.sparsity_level
+                else args.gamma * args.gamma_under
+            )
+            loss_reg = gamma_eff * diff**2
+
         loss = loss_ce + loss_reg
 
         loss.backward()
@@ -130,6 +247,7 @@ def train(epoch):
 
         apply_func(model, "DecisionHead", normalize_head_weights)
 
+        # --- backbone optimizer step (CE only) ---
         optimizer_model.zero_grad()
         output = model(data)
         loss_model = F.cross_entropy(output, target)
@@ -137,26 +255,49 @@ def train(epoch):
         optimizer_model.step()
 
         if i % args.log_interval == 0:
-            concat_channels = torch.cat(selected_channels, dim=1)
-            sparsity = (concat_channels > args.pruning_threshold).float().mean()
-            mean_gate = concat_channels.mean()
-            acc = (output.max(1)[1] == target).float().mean()
-
-            print(
-                "Train Epoch: %d [%d/%d]\tLoss: %.4f, Loss_CE: %.4f, Loss_REG: %.4f, "
-                "Sparsity: %.4f, Mean gate: %.4f, Accuracy: %.4f"
-                % (
-                    epoch,
-                    i,
-                    len(trainloader),
-                    loss.item(),
-                    loss_ce.item(),
-                    loss_reg.item(),
-                    sparsity.item(),
-                    mean_gate.item(),
-                    acc.item(),
+            # concat_channels was computed after the first forward (L layers).
+            # The list now has 2L entries after the second forward, but the
+            # sparsity/density numbers from the first-forward snapshot are stable.
+            sparsity = (concat_channels > args.pruning_threshold).float().mean().item()
+            acc = (output.max(1)[1] == target).float().mean().item()
+            if args.dynamic:
+                mean_rtgt = r_tgt.mean().item()
+                print(
+                    "Train Epoch: %d [%d/%d]\tLoss: %.4f, Loss_CE: %.4f, Loss_REG: %.4f, "
+                    "r_tgt_mean: %.4f, Sparsity: %.4f, Accuracy: %.4f"
+                    % (
+                        epoch,
+                        i,
+                        len(trainloader),
+                        loss.item(),
+                        loss_ce.item(),
+                        loss_reg.item(),
+                        mean_rtgt,
+                        sparsity,
+                        acc,
+                    )
                 )
-            )
+            else:
+                mean_gate = concat_channels.mean().item()
+                print(
+                    "Train Epoch: %d [%d/%d]\tLoss: %.4f, Loss_CE: %.4f, Loss_REG: %.4f, "
+                    "Sparsity: %.4f, Mean gate: %.4f, Accuracy: %.4f"
+                    % (
+                        epoch,
+                        i,
+                        len(trainloader),
+                        loss.item(),
+                        loss_ce.item(),
+                        loss_reg.item(),
+                        sparsity,
+                        mean_gate,
+                        acc,
+                    )
+                )
+
+
+# r_tgt evaluation grid for dynamic mode: 5 evenly spaced points
+_EVAL_GRID_N = 5
 
 
 def test():
@@ -168,49 +309,103 @@ def test():
         set_pruning_threshold,
         pruning_threshold=args.pruning_threshold,
     )
-    test_loss_ce = []
-    test_loss_reg = []
-    test_sparsity = []
-    correct = 0
-    with torch.no_grad():
-        for data, target in testloader:
-            default_graph.clear_all_tensors()
 
-            data, target = data.to(args.device), target.to(args.device)
-            output = model(data)
+    if args.dynamic:
+        # Sweep r_tgt over the evaluation grid; one full test-set pass per point.
+        r_tgt_grid = np.linspace(args.r_min, args.r_max, _EVAL_GRID_N).tolist()
+        point_results = {}  # r_tgt_val -> (realized_density, accuracy)
 
-            selected_channels = default_graph.get_tensor_list("selected_channels")
-            concat_channels = torch.cat(selected_channels, dim=1)
+        for r_val in r_tgt_grid:
+            correct = 0
+            densities = []
+            with torch.no_grad():
+                for data, target in testloader:
+                    default_graph.clear_all_tensors()
+                    B = data.shape[0]
+                    r_t = torch.full((B, 1), r_val, device=args.device)
+                    default_graph.append_tensor("r_tgt", r_t)
+                    data, target = data.to(args.device), target.to(args.device)
+                    output = model(data)
+                    sel = default_graph.get_tensor_list("selected_channels")
+                    cc = torch.cat(sel, dim=1)
+                    densities.append(
+                        (cc > args.pruning_threshold).float().mean().item()
+                    )
+                    correct += (output.max(1)[1] == target).float().sum().item()
+            acc = correct / len(testloader.dataset)
+            realized = float(np.mean(densities))
+            point_results[r_val] = (realized, acc)
+            print(
+                "  [r_tgt=%.2f] keep-frac=%.4f, MACs-redux=%.2f%%, Acc=%.4f"
+                % (r_val, realized, (1.0 - realized) * 100, acc)
+            )
 
-            test_loss_ce.append(F.cross_entropy(output, target).item())
-            test_sparsity_frac = (concat_channels > args.pruning_threshold).float().mean()
-            test_soft_sparsity = torch.sigmoid(10.0 * (concat_channels - args.pruning_threshold)).mean()
-            test_diff = test_soft_sparsity - args.sparsity_level
-            test_gamma_eff = args.gamma if test_sparsity_frac > args.sparsity_level else args.gamma * args.gamma_under
-            test_loss_reg.append((test_gamma_eff * test_diff ** 2).item())
-            test_sparsity.append(test_sparsity_frac.item())
-
-            pred = output.max(1)[1]
-            correct += (pred == target).float().sum().item()
-
-    actions = torch.stack(default_graph.get_tensor_list("sampled_actions")).permute(
-        1, 0
-    )
-    acc = correct / len(testloader.dataset)
-    print(
-        "Test set: Loss: %.4f, Loss_CE: %.4f, Loss_REG: %.4f, "
-        "Sparsity: %.4f, Accuracy: %.4f"
-        % (
-            np.mean(test_loss_ce) + np.mean(test_loss_reg),
-            np.mean(test_loss_ce),
-            np.mean(test_loss_reg),
-            np.mean(test_sparsity),
-            acc,
+        mean_acc = float(np.mean([v[1] for v in point_results.values()]))
+        mean_tracking_err = float(
+            np.mean([abs(v[0] - k) for k, v in point_results.items()])
         )
-    )
-    print("   First 10 sampled actions: \n" + str(actions[:10].cpu().numpy()))
-    print("   First 10 targets: " + str(target[:10].cpu().numpy()) + "\n")
-    return acc, np.mean(test_sparsity)
+        print(
+            "Test sweep: mean_acc=%.4f, mean_tracking_err=%.4f\n"
+            % (mean_acc, mean_tracking_err)
+        )
+        return mean_acc, mean_tracking_err
+
+    else:
+        # Static mode: existing single-pass test
+        test_loss_ce = []
+        test_loss_reg = []
+        test_sparsity = []
+        correct = 0
+        with torch.no_grad():
+            for data, target in testloader:
+                default_graph.clear_all_tensors()
+                B = data.shape[0]
+                r_t = torch.full((B, 1), args.sparsity_level, device=args.device)
+                default_graph.append_tensor("r_tgt", r_t)
+
+                data, target = data.to(args.device), target.to(args.device)
+                output = model(data)
+
+                selected_channels = default_graph.get_tensor_list("selected_channels")
+                concat_channels = torch.cat(selected_channels, dim=1)
+
+                test_loss_ce.append(F.cross_entropy(output, target).item())
+                test_sparsity_frac = (
+                    (concat_channels > args.pruning_threshold).float().mean()
+                )
+                test_soft = torch.sigmoid(
+                    10.0 * (concat_channels - args.pruning_threshold)
+                ).mean()
+                test_diff = test_soft - args.sparsity_level
+                test_gamma_eff = (
+                    args.gamma
+                    if test_sparsity_frac > args.sparsity_level
+                    else args.gamma * args.gamma_under
+                )
+                test_loss_reg.append((test_gamma_eff * test_diff**2).item())
+                test_sparsity.append(test_sparsity_frac.item())
+
+                pred = output.max(1)[1]
+                correct += (pred == target).float().sum().item()
+
+        actions = torch.stack(default_graph.get_tensor_list("sampled_actions")).permute(
+            1, 0
+        )
+        acc = correct / len(testloader.dataset)
+        print(
+            "Test set: Loss: %.4f, Loss_CE: %.4f, Loss_REG: %.4f, "
+            "Sparsity: %.4f, Accuracy: %.4f"
+            % (
+                np.mean(test_loss_ce) + np.mean(test_loss_reg),
+                np.mean(test_loss_ce),
+                np.mean(test_loss_reg),
+                np.mean(test_sparsity),
+                acc,
+            )
+        )
+        print("   First 10 sampled actions: \n" + str(actions[:10].cpu().numpy()))
+        print("   First 10 targets: " + str(target[:10].cpu().numpy()) + "\n")
+        return acc, np.mean(test_sparsity)
 
 
 def save_checkpoint(state, filepath):
@@ -219,10 +414,11 @@ def save_checkpoint(state, filepath):
 
 _T_START = 5.0
 _T_END = 0.5
-_SPARSITY_TOL = 0.05   # must be within this of target to be considered for best
+_SPARSITY_TOL = 0.05  # static mode: sparsity must be in [target - tol, target]
+_TRACKING_TOL = 0.05  # dynamic mode: mean |realized - r_tgt| must be < this
 
 best_acc = 0.0
-best_sparsity_dist = float("inf")  # fallback: closest sparsity to target seen so far
+best_metric = float("inf")  # static: sparsity_dist; dynamic: mean_tracking_err
 ever_on_target = False
 
 for epoch in range(args.epochs):
@@ -232,25 +428,34 @@ for epoch in range(args.epochs):
     default_graph.append_tensor("temperature", temperature)
 
     train(epoch)
-    acc, sparsity = test()
+    metric_a, metric_b = test()  # (acc, sparsity) or (mean_acc, mean_tracking_err)
     scheduler_gate.step()
     scheduler_model.step()
 
-    on_target = (args.sparsity_level - _SPARSITY_TOL) <= sparsity <= args.sparsity_level
-    sparsity_dist = abs(sparsity - args.sparsity_level)
+    if args.dynamic:
+        acc = metric_a
+        mean_tracking_err = metric_b
+        on_target = mean_tracking_err < _TRACKING_TOL
+        dist = mean_tracking_err
+    else:
+        acc = metric_a
+        sparsity = metric_b
+        on_target = (
+            (args.sparsity_level - _SPARSITY_TOL) <= sparsity <= args.sparsity_level
+        )
+        dist = abs(sparsity - args.sparsity_level)
 
     if on_target:
         ever_on_target = True
 
-    should_save = (
-        (on_target and acc > best_acc) or
-        (not ever_on_target and sparsity_dist < best_sparsity_dist)
+    should_save = (on_target and acc > best_acc) or (
+        not ever_on_target and dist < best_metric
     )
 
     if should_save:
         if on_target:
             best_acc = acc
-        best_sparsity_dist = sparsity_dist
+        best_metric = dist
         save_checkpoint(
             {
                 "epoch": epoch,
@@ -258,14 +463,31 @@ for epoch in range(args.epochs):
             },
             filepath=args.logdir,
         )
-        label = "New best" if on_target else "Closest to target so far (no on-target epoch yet)"
-        print(
-            "%s @ Epoch %d, Accuracy = %.4f, Sparsity = %.4f — checkpoint saved\n"
-            % (label, epoch, acc, sparsity)
+        label = (
+            "New best"
+            if on_target
+            else "Closest to target so far (no on-target epoch yet)"
         )
+        if args.dynamic:
+            print(
+                "%s @ Epoch %d, mean_acc=%.4f, mean_tracking_err=%.4f — checkpoint saved\n"
+                % (label, epoch, acc, mean_tracking_err)
+            )
+        else:
+            print(
+                "%s @ Epoch %d, Accuracy=%.4f, Sparsity=%.4f — checkpoint saved\n"
+                % (label, epoch, acc, sparsity)
+            )
     else:
-        reason = "" if on_target else " (sparsity off-target)"
-        print(
-            "Epoch %d, Accuracy = %.4f, Sparsity = %.4f (best = %.4f)%s\n"
-            % (epoch, acc, sparsity, best_acc, reason)
-        )
+        if args.dynamic:
+            reason = "" if on_target else " (tracking off-target)"
+            print(
+                "Epoch %d, mean_acc=%.4f, mean_tracking_err=%.4f (best_acc=%.4f)%s\n"
+                % (epoch, acc, mean_tracking_err, best_acc, reason)
+            )
+        else:
+            reason = "" if on_target else " (sparsity off-target)"
+            print(
+                "Epoch %d, Accuracy=%.4f, Sparsity=%.4f (best=%.4f)%s\n"
+                % (epoch, acc, sparsity, best_acc, reason)
+            )

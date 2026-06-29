@@ -1,9 +1,13 @@
 """
 Shared training utilities for dynamic-pruning model training.
 
-Provides: Logger singleton, AverageMeter, accuracy computation, dataset loading
-(CIFAR-10/HAR/KWS), model initialization, model transformation (inserting decision
-heads), and a shared argparse factory used by train_baseline.py, main.py, and export.py.
+Provides:
+  - Logger singleton and ensure_dir / pickle helpers
+  - AverageMeter and top-k accuracy utility
+  - Dataset loading for CIFAR-10/100, HAR, and KWS
+  - Model initialization and transform_model (inserts target-conditioned DecisionHeads)
+  - Shared argparse factory (get_basic_argument_parser) used by train_baseline.py,
+    main.py, finetune.py, export.py, and calibrate.py
 """
 
 import argparse
@@ -182,13 +186,24 @@ def get_basic_argument_parser(default_wd: float):
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="kws", type=str)
     parser.add_argument("--arch", "-a", default="kws", type=str)
-    parser.add_argument("--lr", default=None, type=float,
-                        help="Learning rate override. Defaults to architecture-specific value.")
+    parser.add_argument(
+        "--lr",
+        default=None,
+        type=float,
+        help="Learning rate override. Defaults to architecture-specific value.",
+    )
     parser.add_argument("--mm", default=0.9, type=float)
     parser.add_argument("--wd", default=default_wd, type=float)
     parser.add_argument("--epochs", default=10, type=int)
     parser.add_argument("--log_interval", default=100, type=int)
     parser.add_argument("--train_batch_size", default=512, type=int)
+    parser.add_argument(
+        "--d_embed",
+        default=8,
+        type=int,
+        help="Embedding dimension for the r_tgt conditioning input in "
+        "the action head. Must match across Stage 2/3/4.",
+    )
 
     return parser
 
@@ -448,7 +463,7 @@ def initialize_model(dataset, arch, num_classes):
     return model
 
 
-def transform_model(model, arch, action_num):
+def transform_model(model, arch, action_num, d_embed=8):
     if arch.startswith("resnet"):
         from decision import init_decision_basicblock, decision_basicblock_forward
 
@@ -472,7 +487,7 @@ def transform_model(model, arch, action_num):
 
     print("==> Transforming model...")
 
-    apply_func(model, module_type, init_func, action_num=action_num)
+    apply_func(model, module_type, init_func, action_num=action_num, d_embed=d_embed)
     apply_func(model, "DecisionHead", collect_params)
     replace_func(model, module_type, new_forward)
     apply_func(model, "DecisionHead", normalize_head_weights)
