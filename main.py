@@ -240,6 +240,49 @@ def train(epoch):
         loss = loss_ce + loss_reg
 
         loss.backward()
+
+        if args.dynamic and i % args.log_interval == 0:
+            # Diagnostic: compare gradient magnitude reaching r_proj (the
+            # r_tgt conditioning pathway) against fc1 (the feature pathway)
+            # across all decision heads, to check whether r_tgt's gradient
+            # signal is actually present before debugging further upstream.
+            r_proj_norms = []
+            fc1_norms = []
+            for m in model.modules():
+                if m.__class__.__name__ == "DecisionHead":
+                    if m.r_proj.weight.grad is not None:
+                        r_proj_norms.append(m.r_proj.weight.grad.norm().item())
+                    if m.fc1.weight.grad is not None:
+                        fc1_norms.append(m.fc1.weight.grad.norm().item())
+            if r_proj_norms and fc1_norms:
+                print(
+                    "  [grad-diag] mean |grad r_proj|: %.6e, mean |grad fc1|: %.6e, "
+                    "ratio: %.6f"
+                    % (
+                        np.mean(r_proj_norms),
+                        np.mean(fc1_norms),
+                        np.mean(r_proj_norms) / (np.mean(fc1_norms) + 1e-12),
+                    )
+                )
+
+            # Diagnostic: compare forward-pass logit magnitude contributed by
+            # r_proj (the r_tgt term) against fc1 (the feature term). If fc1's
+            # output is much larger in scale, r_tgt's contribution gets
+            # swamped after softmax regardless of how healthy its gradient is.
+            logit_diag = default_graph.get_tensor_list("head_logit_diag")
+            if logit_diag:
+                fc1_mags = [fo.abs().mean().item() for fo, _ in logit_diag]
+                rproj_mags = [ro.abs().mean().item() for _, ro in logit_diag]
+                print(
+                    "  [scale-diag] mean |fc1_out|: %.6f, mean |r_proj_out|: %.6f, "
+                    "ratio (fc1/r_proj): %.4f"
+                    % (
+                        np.mean(fc1_mags),
+                        np.mean(rproj_mags),
+                        np.mean(fc1_mags) / (np.mean(rproj_mags) + 1e-12),
+                    )
+                )
+
         optimizer_gate.step()
 
         for p in gate_params:

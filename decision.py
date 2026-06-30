@@ -67,6 +67,9 @@ default_graph.add_tensor_list("temperature", True)
 default_graph.add_tensor_list(
     "r_tgt"
 )  # non-persistent: set once per batch by training loop
+default_graph.add_tensor_list(
+    "head_logit_diag"
+)  # non-persistent: (fc1_out, r_proj_out) per DecisionHead, for scale diagnostics
 
 
 class DecisionHead(nn.Module):
@@ -138,7 +141,12 @@ class DecisionHead(nn.Module):
         else:
             r_tgt = torch.full((x.shape[0], 1), 0.5, device=x.device)
 
-        out = self.fc1(out) + self.r_proj(r_tgt)  # [B, action_num]
+        fc1_out = self.fc1(out)
+        r_proj_out = self.r_proj(r_tgt)
+        default_graph.append_tensor(
+            "head_logit_diag", (fc1_out.detach(), r_proj_out.detach())
+        )
+        out = fc1_out + r_proj_out  # [B, action_num]
 
         action_probs = F.softmax(out, dim=1)
         if self.deterministic or not self.training:
