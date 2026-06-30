@@ -106,9 +106,16 @@ class DecisionHead(nn.Module):
 
     def normalize_weights(self):
         # r_proj is additive and architecturally separate from fc1, so
-        # normalizing fc1's feature weights no longer touches (or dilutes)
-        # the r_tgt conditioning pathway.
+        # normalizing fc1's feature weights no longer dilutes the r_tgt
+        # conditioning pathway. But fc1's rows are pinned to unit norm
+        # every step while r_proj's are not, so without an equivalent
+        # floor, gradient pressure from CE (which benefits from ignoring
+        # r_tgt) was free to shrink r_proj's contribution toward
+        # irrelevance over training. Normalizing both pathways to unit
+        # norm guarantees r_tgt a fixed-scale, non-decaying voice in the
+        # action logits.
         self.fc1.weight.data = F.normalize(self.fc1.weight.data, dim=1)
+        self.r_proj.weight.data = F.normalize(self.r_proj.weight.data, dim=1)
 
     def forward(self, x):
         out = self.avgpool(self.relu(x))
