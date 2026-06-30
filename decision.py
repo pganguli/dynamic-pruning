@@ -111,11 +111,19 @@ class DecisionHead(nn.Module):
         # every step while r_proj's are not, so without an equivalent
         # floor, gradient pressure from CE (which benefits from ignoring
         # r_tgt) was free to shrink r_proj's contribution toward
-        # irrelevance over training. Normalizing both pathways to unit
-        # norm guarantees r_tgt a fixed-scale, non-decaying voice in the
-        # action logits.
+        # irrelevance over training.
         self.fc1.weight.data = F.normalize(self.fc1.weight.data, dim=1)
-        self.r_proj.weight.data = F.normalize(self.r_proj.weight.data, dim=1)
+        # r_proj has in_features=1, so per-row normalization (dim=1) would
+        # degenerate to sign(weight) — collapsing all magnitude information
+        # and effectively freezing the gradient. Normalize the whole weight
+        # tensor as a single block instead, so the relative magnitude across
+        # actions (which encodes how strongly r_tgt should shift each
+        # action's logit) survives while the overall scale is still
+        # guaranteed a fixed, non-decaying floor.
+        flat = self.r_proj.weight.data.flatten()
+        self.r_proj.weight.data = F.normalize(flat, dim=0).view_as(
+            self.r_proj.weight.data
+        )
 
     def forward(self, x):
         out = self.avgpool(self.relu(x))

@@ -90,7 +90,7 @@ misc.prepare_logging(args)
 _, testloader = misc.prepare_data(args.dataset, args.train_batch_size)
 
 model = misc.initialize_model(args.dataset, args.arch, args.num_classes)
-misc.transform_model(model, args.arch, args.action_num, d_embed=args.d_embed)
+misc.transform_model(model, args.arch, args.action_num)
 
 if args.finetuned:
     ckpt_path = "logs/finetune-decision-%d/%s-%s/sparsity-%.2f/checkpoint.pth" % (
