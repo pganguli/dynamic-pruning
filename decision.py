@@ -70,6 +70,10 @@ default_graph.add_tensor_list(
 default_graph.add_tensor_list(
     "head_logit_diag"
 )  # non-persistent: (fc1_out, r_proj_out) per DecisionHead, for scale diagnostics
+default_graph.add_tensor_list(
+    "action_routing"
+)  # non-persistent: (action_probs, channel_gates) per DecisionHead, for the
+# expected-density regularizer (dynamic mode) — see main.py train()
 
 
 class DecisionHead(nn.Module):
@@ -108,29 +112,39 @@ class DecisionHead(nn.Module):
         return [self.channel_gates]
 
     def normalize_weights(self):
-        # r_proj is additive and architecturally separate from fc1, so
-        # normalizing fc1's feature weights no longer dilutes the r_tgt
-        # conditioning pathway. But fc1's rows are pinned to unit norm
-        # every step while r_proj's are not, so without an equivalent
-        # floor, gradient pressure from CE (which benefits from ignoring
-        # r_tgt) was free to shrink r_proj's contribution toward
-        # irrelevance over training.
+        # fc1's input (`out`) is now L2-normalized in forward(), so fc1's
+        # output is already bounded to roughly [-1, 1] per action without
+        # needing the input-magnitude protection unit-row-normalization was
+        # originally for. We keep it anyway for parity with the paper's
+        # weight-normalized decision head.
         self.fc1.weight.data = F.normalize(self.fc1.weight.data, dim=1)
-        # r_proj has in_features=1, so per-row normalization (dim=1) would
-        # degenerate to sign(weight) — collapsing all magnitude information
-        # and effectively freezing the gradient. Normalize the whole weight
-        # tensor as a single block instead, so the relative magnitude across
-        # actions (which encodes how strongly r_tgt should shift each
-        # action's logit) survives while the overall scale is still
-        # guaranteed a fixed, non-decaying floor.
-        flat = self.r_proj.weight.data.flatten()
-        self.r_proj.weight.data = F.normalize(flat, dim=0).view_as(
-            self.r_proj.weight.data
-        )
+        # r_proj is deliberately left unnormalized. r_tgt's input range is
+        # narrow ([r_min, r_max], e.g. [0.3, 0.7]), so the weight needs
+        # freedom to scale up enough that r_tgt produces a logit spread
+        # comparable to fc1's — pinning it to unit norm (whether per-row,
+        # which degenerates to sign(), or as a whole block) caps that spread
+        # at a few tenths regardless of how much the regularizer wants more
+        # differentiation, which was silently capping r_tgt's influence on
+        # action selection no matter how high --gamma was pushed. Now that
+        # fc1's input is bounded too (see above), CE no longer has an
+        # unbounded-magnitude shortcut to outcompete r_proj, so the original
+        # concern motivating this floor (CE shrinking r_proj toward
+        # irrelevance) is far less likely to dominate.
+        pass
 
     def forward(self, x):
         out = self.avgpool(self.relu(x))
         out = out.view(x.shape[0], x.shape[1])  # [B, C_in]
+        # fc1's weight rows are pinned to unit norm, but `out` itself is not
+        # bounded — its magnitude grows with the backbone's feature scale
+        # over training (observed empirically: ~0.8 -> ~3.7 over 3 epochs).
+        # r_proj's output is implicitly capped by its own unit-norm weight
+        # constraint, so an unbounded `out` lets fc1's contribution to the
+        # logits grow to dominate r_proj's by 5x+ within a few epochs,
+        # drowning out the r_tgt signal in softmax regardless of gradient
+        # health. Normalizing `out` bounds fc1's output to the same scale
+        # as r_proj's, so both terms compete on comparable footing.
+        out = F.normalize(out, dim=1)
 
         # Read per-batch r_tgt from the registry.  Falls back to 0.5 if the
         # training loop has not set one (e.g. export-time tracing with a specific
@@ -149,6 +163,17 @@ class DecisionHead(nn.Module):
         out = fc1_out + r_proj_out  # [B, action_num]
 
         action_probs = F.softmax(out, dim=1)
+        if self.training:
+            # Expose the routing distribution and gate densities (un-detached)
+            # so the training loop can build a per-head expected-density loss:
+            # E_a~action_probs[density(a)] vs r_tgt. This is a clean,
+            # low-variance gradient path directly into action_probs (hence
+            # into fc1 + r_proj), unlike the realized/sampled density which
+            # only constrains the aggregate outcome across all heads and
+            # lets the routing decision itself stay r_tgt-independent.
+            default_graph.append_tensor(
+                "action_routing", (action_probs, self.channel_gates)
+            )
         if self.deterministic or not self.training:
             sampled_actions = action_probs.max(1)[1]
             selected_channels = self.channel_gates[sampled_actions]

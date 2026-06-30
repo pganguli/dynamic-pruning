@@ -224,8 +224,29 @@ def train(epoch):
         soft = torch.sigmoid(10.0 * (concat_channels - args.pruning_threshold))
 
         if args.dynamic:
-            d = soft.mean(dim=1, keepdim=True)  # [B, 1] per-sample realized density
-            loss_reg = args.gamma * ((d - r_tgt) ** 2).mean()
+            # Expected-density regularizer: for each decision head independently,
+            # push the *routing-probability-weighted* density toward r_tgt,
+            # rather than only the aggregate realized density across all heads.
+            # The aggregate-only form let any individual head's routing stay
+            # r_tgt-independent as long as other heads compensated on average
+            # (population-matching instead of per-sample conditional routing,
+            # confirmed via CPU repro: loss converged low while eval-time
+            # routing never differentiated by r_tgt). Each head's expected
+            # density is differentiable end-to-end through action_probs
+            # (hence through fc1 + r_proj) without going through the noisy
+            # Gumbel-sampled selection, giving a much cleaner gradient into
+            # the routing decision itself.
+            action_routing = default_graph.get_tensor_list("action_routing")
+            per_head_losses = []
+            for action_probs, channel_gates in action_routing:
+                gate_density = torch.sigmoid(
+                    10.0 * (channel_gates - args.pruning_threshold)
+                ).mean(dim=1)  # [action_num]
+                expected_density = action_probs @ gate_density  # [B]
+                per_head_losses.append(
+                    (expected_density.unsqueeze(1) - r_tgt) ** 2
+                )
+            loss_reg = args.gamma * torch.cat(per_head_losses, dim=1).mean()
         else:
             soft_sparsity = soft.mean()  # scalar
             diff = soft_sparsity - args.sparsity_level
