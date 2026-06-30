@@ -197,13 +197,6 @@ def get_basic_argument_parser(default_wd: float):
     parser.add_argument("--epochs", default=10, type=int)
     parser.add_argument("--log_interval", default=100, type=int)
     parser.add_argument("--train_batch_size", default=512, type=int)
-    parser.add_argument(
-        "--d_embed",
-        default=8,
-        type=int,
-        help="Embedding dimension for the r_tgt conditioning input in "
-        "the action head. Must match across Stage 2/3/4.",
-    )
 
     return parser
 
@@ -463,7 +456,7 @@ def initialize_model(dataset, arch, num_classes):
     return model
 
 
-def transform_model(model, arch, action_num, d_embed=8):
+def transform_model(model, arch, action_num):
     if arch.startswith("resnet"):
         from decision import init_decision_basicblock, decision_basicblock_forward
 
@@ -487,7 +480,7 @@ def transform_model(model, arch, action_num, d_embed=8):
 
     print("==> Transforming model...")
 
-    apply_func(model, module_type, init_func, action_num=action_num, d_embed=d_embed)
+    apply_func(model, module_type, init_func, action_num=action_num)
     apply_func(model, "DecisionHead", collect_params)
     replace_func(model, module_type, new_forward)
     apply_func(model, "DecisionHead", normalize_head_weights)

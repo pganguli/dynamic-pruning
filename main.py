@@ -148,7 +148,7 @@ model.load_state_dict(
     )
 )
 
-misc.transform_model(model, args.arch, args.action_num, d_embed=args.d_embed)
+misc.transform_model(model, args.arch, args.action_num)
 
 model = model.to(args.device)
 

@@ -306,7 +306,6 @@ to gauge the accuracy cost of sharing weights across the range.
 | `--train_batch_size` | — | Batch size | 512 |
 | `--pruning_threshold` | — | Hard gate threshold at evaluation time | 0.5 |
 | `--log_interval` | — | Log every N batches | 100 |
-| `--d_embed` | — | Embedding dimension for r_tgt conditioning | 8 |
 | `--dynamic` | — | Enable dynamic-target mode | off (static by default) |
 | `--r_min` | — | Lower bound of r_tgt training range | 0.3 |
 | `--r_max` | — | Upper bound of r_tgt training range | 0.7 |
@@ -353,6 +352,6 @@ the reported results, but are worth being aware of.
 | 3 | Gate clamping | Not mentioned | Gates clamped to [0, 1] after each Adam step | Forces gate mean to represent fraction of active channels |
 | 4 | Regularization strength `--gamma` | 1.0 (paper) | 2.2 (empirically tuned) | Paper value causes slow sparsity convergence with batch 512; increase if sparsity takes many epochs to reach target |
 | 5 | Supported architectures | VGG16-BN, ResNet-56/50 | ResNet variants, HAR-CNN, KWS-CNN | VGG-family models not available |
-| 6 | Target-conditioned action head | Not in paper | `tgt_embed` (d_embed=8) concatenated to pooled features; `fc1` widened accordingly | Enables runtime `r_tgt` knob; old static checkpoints with `action_num=5` are incompatible — retrain from Stage 2 |
+| 6 | Target-conditioned action head | Not in paper | `r_proj` (`Linear(1, action_num)`) added directly onto `fc1`'s logits | Enables runtime `r_tgt` knob; old static checkpoints with `action_num=5` are incompatible — retrain from Stage 2 |
 | 7 | Per-sample regularizer (dynamic mode) | Grand-mean Ω over whole batch | Per-sample `γ · mean((d_k − r_tgt_k)²)` using sigmoid proxy | Forces mask menu to span a range of densities; required for the knob to work |
 | 8 | `r_tgt` threading | N/A | Via global `TorchGraph` registry (same mechanism as temperature) | Avoids changing model `forward()` signatures; `r_tgt` is latched at export time per operating point |

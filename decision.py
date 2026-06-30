@@ -12,13 +12,16 @@ DecisionUnit: a per-layer soft gate that learns whether to skip (prune) an
   (RelaxedOneHotCategorical) to keep the gate differentiable; at export/
   inference time it is replaced by a hard argmax threshold.
 
-  The action head is *target-conditioned*: it takes a per-batch scalar
-  r_tgt (target keep-fraction, same units as sparsity_level) alongside the
-  pooled feature vector.  r_tgt is threaded through the global TorchGraph
-  registry (same mechanism as temperature), so no model-signature changes
-  are needed.  This forces the shared mask menu to differentiate into
-  masks of differing densities and trains the head to map (image, r_tgt) →
-  appropriate mask.
+  The action head is *target-conditioned*: a per-batch scalar r_tgt (target
+  keep-fraction, same units as sparsity_level) is projected through a small
+  linear layer (`r_proj`) and added directly onto the feature-driven fc1
+  logits, rather than being embedded and concatenated with the pooled
+  features. r_tgt is threaded through the global TorchGraph registry (same
+  mechanism as temperature), so no model-signature changes are needed. The
+  additive form keeps the r_tgt gradient pathway architecturally separate
+  from the feature pathway (no shared normalization, no concat dead zones),
+  which is needed for the head to learn a real (image, r_tgt) → mask
+  mapping instead of collapsing to an r_tgt-independent average mask.
 
 At export time (export.py) the model is traced with a latched r_tgt value and the
 hard-argmax gate selection is baked into the ONNX graph per operating point.
@@ -74,34 +77,37 @@ class DecisionHead(nn.Module):
         action_num,
         deterministic=False,
         pruning_threshold=0,
-        d_embed=8,
     ):
         super(DecisionHead, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.action_num = action_num
         self.deterministic = deterministic
-        self.d_embed = d_embed
         self.avgpool = nn.AdaptiveAvgPool2d(1)
-        # Embed the scalar target keep-fraction so it is not drowned out by
-        # the C-dimensional feature vector when concatenated.
-        self.tgt_embed = nn.Sequential(nn.Linear(1, d_embed), nn.ReLU())
-        # Widened fc1: takes [pooled_features | r_tgt_embedding] → action logits
-        self.fc1 = nn.Linear(in_channels + d_embed, action_num, bias=False)
+        self.fc1 = nn.Linear(in_channels, action_num, bias=False)
+        # Additive target-conditioning term: projects the scalar r_tgt
+        # straight onto the action logits, architecturally separate from
+        # the feature pathway. Concatenating an embedded r_tgt into fc1's
+        # input (and normalizing the combined row) starved the r_tgt
+        # gradient — it never escaped a near-zero-gradient initialization,
+        # so the head learned to ignore r_tgt and output an r_tgt-
+        # independent average density. This additive path gives r_tgt a
+        # full-strength, undiluted gradient into every action logit.
+        self.r_proj = nn.Linear(1, action_num, bias=True)
         self.relu = nn.ReLU()
         self.channel_gates = nn.Parameter(torch.ones(action_num, out_channels))
         self.pruning_threshold = pruning_threshold
 
     def head_params(self):
-        # tgt_embed parameters are also part of the decision head (go to Adam optimizer)
-        return [self.fc1.weight] + list(self.tgt_embed.parameters())
+        return [self.fc1.weight] + list(self.r_proj.parameters())
 
     def gate_params(self):
         return [self.channel_gates]
 
     def normalize_weights(self):
-        # Normalize full fc1 rows (includes both feature and embedding columns).
-        # If conditioning proves too weak, consider normalizing only feature columns.
+        # r_proj is additive and architecturally separate from fc1, so
+        # normalizing fc1's feature weights no longer touches (or dilutes)
+        # the r_tgt conditioning pathway.
         self.fc1.weight.data = F.normalize(self.fc1.weight.data, dim=1)
 
     def forward(self, x):
@@ -117,8 +123,7 @@ class DecisionHead(nn.Module):
         else:
             r_tgt = torch.full((x.shape[0], 1), 0.5, device=x.device)
 
-        e = self.tgt_embed(r_tgt)  # [B, d_embed]
-        out = self.fc1(torch.cat([out, e], dim=1))  # [B, action_num]
+        out = self.fc1(out) + self.r_proj(r_tgt)  # [B, action_num]
 
         action_probs = F.softmax(out, dim=1)
         if self.deterministic or not self.training:
@@ -173,10 +178,8 @@ def set_pruning_threshold(m, pruning_threshold):
     m.pruning_threshold = pruning_threshold
 
 
-def init_decision_convbn(m, action_num, d_embed=8):
-    m.decision_head = DecisionHead(
-        m.conv.in_channels, m.conv.out_channels, action_num, d_embed=d_embed
-    )
+def init_decision_convbn(m, action_num):
+    m.decision_head = DecisionHead(m.conv.in_channels, m.conv.out_channels, action_num)
 
 
 def decision_convbn_forward(self, x):
@@ -193,9 +196,9 @@ def decision_convbn_forward(self, x):
     return out
 
 
-def init_decision_conv_block(m, action_num, d_embed=8):
+def init_decision_conv_block(m, action_num):
     m.decision_head = DecisionHead(
-        m.conv1.in_channels, m.conv1.out_channels, action_num, d_embed=d_embed
+        m.conv1.in_channels, m.conv1.out_channels, action_num
     )
 
 
@@ -216,9 +219,9 @@ def decision_conv_block_forward(self, x):
     return out
 
 
-def init_decision_basicblock(m, action_num, d_embed=8):
+def init_decision_basicblock(m, action_num):
     m.decision_head = DecisionHead(
-        m.conv1.in_channels, m.conv1.out_channels, action_num, d_embed=d_embed
+        m.conv1.in_channels, m.conv1.out_channels, action_num
     )
 
 
@@ -239,9 +242,9 @@ def decision_basicblock_forward(self, x):
     return out
 
 
-def init_decision_bottleneck(m, action_num, d_embed=8):
+def init_decision_bottleneck(m, action_num):
     m.decision_head = DecisionHead(
-        m.conv1.in_channels, m.conv1.out_channels, action_num, d_embed=d_embed
+        m.conv1.in_channels, m.conv1.out_channels, action_num
     )
 
 

@@ -105,7 +105,7 @@ def main():
         weights_only=True,
     )
 
-    misc.transform_model(model, args.arch, args.action_num, d_embed=args.d_embed)
+    misc.transform_model(model, args.arch, args.action_num)
 
     model.eval()
     apply_func(model, "DecisionHead", set_deterministic_value, deterministic=True)
