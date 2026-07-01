@@ -102,7 +102,16 @@ class DecisionHead(nn.Module):
         # full-strength, undiluted gradient into every action logit.
         self.r_proj = nn.Linear(1, action_num, bias=True)
         self.relu = nn.ReLU()
-        self.channel_gates = nn.Parameter(torch.ones(action_num, out_channels))
+        # Initialize gate densities spread across [0, 1] so each action starts
+        # with a distinct density tier. All-ones init lets training converge to
+        # only a few clusters (empirically 3 out of 16), leaving gaps in the
+        # density range that r_tgt cannot reach at eval time regardless of gamma.
+        gate_init = torch.zeros(action_num, out_channels)
+        for k, d in enumerate(torch.linspace(0.0, 1.0, action_num).tolist()):
+            n_on = round(d * out_channels)
+            if n_on > 0:
+                gate_init[k, torch.randperm(out_channels)[:n_on]] = 1.0
+        self.channel_gates = nn.Parameter(gate_init)
         self.pruning_threshold = pruning_threshold
 
     def head_params(self):
