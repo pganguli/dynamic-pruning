@@ -195,7 +195,7 @@ forcing the mask menu to differentiate into masks of varying densities.
 ```bash
 python main.py --arch resnet56 --dataset cifar10 \
     --dynamic --r_min 0.1 --r_max 0.9 \
-    --gamma 10 --lambda_div 20 --action_num 16 --epochs 100 \
+    --gamma 10 --lambda_div 20 --lambda_balance 0.5 --action_num 16 --epochs 100 \
     --train_batch_size 2048
 ```
 
@@ -313,6 +313,7 @@ to gauge the accuracy cost of sharing weights across the range.
 | `--sparsity_level` | *r* | Target keep-fraction (static mode) or checkpoint-path key (dynamic mode) | 0.4 |
 | `--gamma` | *γ* | Expected-density regularization strength | 10 (dynamic mode), 2.2 (static mode) |
 | `--lambda_div` | — | Gate diversity anchor strength (dynamic mode only). Penalises each action's mean gate value deviating from its target density (linspace(r_min, r_max, action_num)), using raw mean (not sigmoid proxy) so gradient is constant and doesn't vanish when CE drives gate values toward 0 or 1 | 20.0 |
+| `--lambda_balance` | — | Load-balancing loss weight (dynamic mode only, Switch-Transformer-style). Penalises routing collapse onto a handful of actions: `action_num * sum_k f_k * P_k` where `f_k` is the detached hard-routed fraction and `P_k` is the mean softmax probability per action. Prevents rich-get-richer routing collapse even when gate densities are correctly spread | 0.5 |
 | `--gamma_under` | — | Fraction of γ applied when sparsity is below target (static mode only) | 0.7 |
 | `--action_num` | *m* | Channel-selection masks per decision unit | 16 (dynamic), 5 (paper CIFAR) |
 | `--epochs` | — | Training epochs | 100 (Stage 2D @ batch 2048), 160 (Stages 1, 3) |
@@ -368,6 +369,8 @@ the reported results, but are worth being aware of.
 | 4 | Regularization strength `--gamma` | 1.0 (paper) | 2.2 (empirically tuned) | Paper value causes slow sparsity convergence with batch 512; increase if sparsity takes many epochs to reach target |
 | 5 | Supported architectures | VGG16-BN, ResNet-56/50 | ResNet variants, HAR-CNN, KWS-CNN | VGG-family models not available |
 | 6 | Target-conditioned action head | Not in paper | `r_proj` (`Linear(1, action_num)`) added directly onto `fc1`'s logits | Enables runtime `r_tgt` knob; old static checkpoints with `action_num=5` are incompatible — retrain from Stage 2 |
-| 7 | Per-head expected-density regularizer (dynamic mode) | Grand-mean Ω over whole batch | Per-head `γ · mean((E_{a~probs}[density(a)] − r_tgt)²)` where `E = action_probs @ sigmoid(10·(channel_gates − 0.5))` | Differentiable path directly into action probabilities (no Gumbel sample needed); forces each head's routing distribution to track r_tgt independently rather than relying on aggregate realized density |
+| 7 | Per-head expected-density regularizer (dynamic mode) | Grand-mean Ω over whole batch | Per-head `γ · mean((E_{a~probs}[density(a)] − r_tgt)²)` where `E = action_probs @ mean(channel_gates, dim=1)` (raw gate mean, not a sigmoid proxy) | Differentiable path directly into action probabilities (no Gumbel sample needed); forces each head's routing distribution to track r_tgt independently rather than relying on aggregate realized density |
 | 8 | `r_tgt` threading | N/A | Via global `TorchGraph` registry (same mechanism as temperature) | Avoids changing model `forward()` signatures; `r_tgt` is latched at export time per operating point |
 | 9 | Channel-gate initialization | Not specified | Logit-inverse soft values: `v_k = 0.5 + logit(d_k)/10` with `d_k = linspace(0.1, 0.9, action_num)` | Spans full training range in the active sigmoid gradient region (~[0.28, 0.72]); all-ones init produces 3-tier collapse; binary {0,1} init saturates sigmoid gradient so CE re-collapses diversity after regularizer loss → 0 |
+| 10 | Gate diversity anchor (dynamic mode) | Not in paper | `λ_div · mean((mean(channel_gates, dim=1) − target_density)²)` per head, independent of routing | Without this, actions that routing rarely selects get ~zero gradient from the expected-density loss (∝ action_probs), so CE drifts their gate values toward whatever maximizes accuracy, collapsing the density menu |
+| 11 | Load-balancing loss (dynamic mode) | Not in paper | Switch-Transformer-style: `λ_balance · action_num · sum_k f_k · P_k`, `f_k` detached hard-routed fraction, `P_k` mean softmax probability | Prevents routing from collapsing onto a handful of the `action_num` actions (rich-get-richer gradient concentration) even when gate densities are correctly spread by the diversity anchor |

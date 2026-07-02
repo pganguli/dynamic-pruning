@@ -77,6 +77,23 @@ parser.add_argument(
     "to 0 or 1 under CE pressure. Dynamic mode only.",
 )
 parser.add_argument(
+    "--lambda_balance",
+    default=0.5,
+    type=float,
+    help="Load-balancing loss weight (Switch-Transformer-style aux loss). "
+    "Penalises routing collapse onto a handful of actions: "
+    "loss = action_num * sum_k f_k * P_k, where f_k is the (detached) "
+    "hard-routed fraction of the batch choosing action k and P_k is the "
+    "mean softmax probability for action k. Minimized when routing is "
+    "uniform across all actions — compatible with r_tgt-conditioned "
+    "selection since r_tgt is sampled uniformly and target densities are "
+    "evenly spaced, so a correct mapping is naturally balanced. Without "
+    "this, expected-density matching alone lets a handful of actions "
+    "dominate routing (rich-get-richer gradient concentration) while "
+    "13+ actions are never selected, regardless of how well their gate "
+    "densities are anchored. Dynamic mode only.",
+)
+parser.add_argument(
     "--gamma_under",
     default=0.7,
     type=float,
@@ -261,12 +278,23 @@ def train(epoch):
             # clusters — the training/inference mismatch confirmed at epoch 99
             # (Loss_REG=0.006 yet tracking_err=0.23). The anchor keeps gate
             # densities spread throughout training so argmax routing is correct.
+            # Load-balancing loss: penalises routing collapse onto a handful
+            # of actions (Switch-Transformer-style aux loss). Without this,
+            # a few actions dominate action_probs early in training and get
+            # disproportionate gradient (rich-get-richer), leaving most of
+            # the 16-action menu unused regardless of how well their gate
+            # densities are anchored by loss_div — confirmed by grid sweep
+            # collapsing to ~3 distinct realized densities even after the
+            # diversity anchor fix. loss = N * sum_k f_k * P_k, minimized
+            # when routing is uniform; f_k is the detached hard-routed
+            # fraction so gradient flows only through the soft P_k term.
             action_routing = default_graph.get_tensor_list("action_routing")
             target_densities = torch.linspace(
                 args.r_min, args.r_max, args.action_num, device=args.device
             )
             per_head_losses = []
             div_losses = []
+            balance_losses = []
             for action_probs, channel_gates in action_routing:
                 # Raw mean of gate values (in [0,1] after clamp) — no sigmoid.
                 # Gradient into channel_gates is constant: 2*(density-target)/C,
@@ -276,8 +304,20 @@ def train(epoch):
                 expected_density = action_probs @ gate_density  # [B]
                 per_head_losses.append((expected_density.unsqueeze(1) - r_tgt) ** 2)
                 div_losses.append(((gate_density - target_densities) ** 2).mean())
+
+                hard_choice = action_probs.argmax(dim=1)
+                f = (
+                    F.one_hot(hard_choice, num_classes=args.action_num)
+                    .float()
+                    .mean(dim=0)
+                    .detach()
+                )  # [action_num], detached hard-routed fraction
+                P = action_probs.mean(dim=0)  # [action_num], soft mean prob
+                balance_losses.append(args.action_num * (f * P).sum())
+
             loss_reg = args.gamma * torch.cat(per_head_losses, dim=1).mean()
             loss_div = args.lambda_div * torch.stack(div_losses).mean()
+            loss_balance = args.lambda_balance * torch.stack(balance_losses).mean()
         else:
             soft_sparsity = soft.mean()  # scalar
             diff = soft_sparsity - args.sparsity_level
@@ -289,8 +329,9 @@ def train(epoch):
             )
             loss_reg = gamma_eff * diff**2
             loss_div = torch.tensor(0.0, device=args.device)
+            loss_balance = torch.tensor(0.0, device=args.device)
 
-        loss = loss_ce + loss_reg + loss_div
+        loss = loss_ce + loss_reg + loss_div + loss_balance
 
         loss.backward()
 
@@ -360,7 +401,7 @@ def train(epoch):
                 mean_rtgt = r_tgt.mean().item()
                 print(
                     "Train Epoch: %d [%d/%d]\tLoss: %.4f, Loss_CE: %.4f, "
-                    "Loss_REG: %.4f, Loss_DIV: %.4f, "
+                    "Loss_REG: %.4f, Loss_DIV: %.4f, Loss_BAL: %.4f, "
                     "r_tgt_mean: %.4f, Sparsity: %.4f, Accuracy: %.4f"
                     % (
                         epoch,
@@ -370,6 +411,7 @@ def train(epoch):
                         loss_ce.item(),
                         loss_reg.item(),
                         loss_div.item(),
+                        loss_balance.item(),
                         mean_rtgt,
                         sparsity,
                         acc,
