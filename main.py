@@ -303,7 +303,15 @@ def train(epoch):
                 gate_density = channel_gates.mean(dim=1)  # [action_num]
                 expected_density = action_probs @ gate_density  # [B]
                 per_head_losses.append((expected_density.unsqueeze(1) - r_tgt) ** 2)
-                div_losses.append(((gate_density - target_densities) ** 2).mean())
+                # Sum (not mean) over the action_num dimension: averaging here
+                # dilutes any single action's correction signal by 1/action_num
+                # before the head-average dilutes it again by 1/num_heads —
+                # together an ~action_num*num_heads-fold reduction that left
+                # lambda_div too weak to resist CE's pull on whichever action
+                # dominates routing (confirmed empirically: extreme actions
+                # drifted to density ~0.001 / ~0.97 despite lambda_div=20
+                # nominally anchoring them to 0.1 / 0.9).
+                div_losses.append(((gate_density - target_densities) ** 2).sum())
 
                 hard_choice = action_probs.argmax(dim=1)
                 f = (
