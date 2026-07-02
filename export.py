@@ -78,6 +78,14 @@ def main():
         "point. The on-device decision-map generator must mirror "
         "this value (see spec Step 7).",
     )
+    parser.add_argument(
+        "--finetuned",
+        action="store_true",
+        default=False,
+        help="Load Stage 3D fine-tuned checkpoint instead of Stage 2. "
+        "Recommended: the fine-tuned model has significantly higher "
+        "accuracy at the same sparsity level.",
+    )
     args = parser.parse_args()
 
     args.num_classes = {"cifar10": 10, "cifar100": 100, "har": 6, "kws": 12}.get(
@@ -97,20 +105,28 @@ def main():
     misc.prepare_logging(args)
 
     model = misc.initialize_model(args.dataset, args.arch, args.num_classes)
-
-    print("==> Loading pretrained model...")
-    checkpoint = torch.load(
-        os.path.join(args.logdir, "checkpoint.pth.tar"),
-        map_location=torch.device("cpu"),
-        weights_only=True,
-    )
-
     misc.transform_model(model, args.arch, args.action_num)
-
     model.eval()
     apply_func(model, "DecisionHead", set_deterministic_value, deterministic=True)
 
-    model.load_state_dict(checkpoint["state_dict"])
+    if args.finetuned:
+        ckpt_path = "logs/finetune-decision-%d/%s-%s/sparsity-%.2f/checkpoint.pth" % (
+            args.action_num,
+            args.dataset,
+            args.arch,
+            args.sparsity_level,
+        )
+        print("==> Loading Stage 3 fine-tuned checkpoint from %s ..." % ckpt_path)
+        state_dict = torch.load(ckpt_path, map_location=torch.device("cpu"), weights_only=True)
+        model.load_state_dict(state_dict)
+    else:
+        print("==> Loading Stage 2 checkpoint...")
+        checkpoint = torch.load(
+            os.path.join(args.logdir, "checkpoint.pth.tar"),
+            map_location=torch.device("cpu"),
+            weights_only=True,
+        )
+        model.load_state_dict(checkpoint["state_dict"])
 
     # Latch r_tgt in the registry so tracing bakes this operating point into
     # the ONNX graph. Run export.py once per r_tgt to cover multiple points.

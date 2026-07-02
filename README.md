@@ -29,13 +29,16 @@ In **dynamic-target mode** (`--dynamic`), the action head also receives a scalar
 offline-trained model to cover a range of operating points at inference time by
 varying `r_tgt`. Specifically:
 
-- The action head is **target-conditioned**: it concatenates a small learned embedding of
-  `r_tgt` with the pooled features before the linear logit layer.
+- The action head is **target-conditioned**: a small linear layer (`r_proj`) projects the
+  scalar `r_tgt` and adds its output **directly onto** the feature-driven action logits,
+  keeping the r_tgt gradient path architecturally separate from the feature path.
 - During training, a different `r_tgt` is sampled **per sample** (uniformly in
   `[r_min, r_max]`), forcing the shared mask menu to differentiate into masks of
   differing densities so the head can map `(image, r_tgt) → appropriate mask`.
-- The regularizer becomes a **per-sample symmetric** density loss: `γ · mean((d_k − r_tgt_k)²)`,
-  where `d_k` is the realized keep-fraction for sample `k`.
+- The regularizer is a **per-head expected-density loss**: for each decision head
+  independently, `γ · mean((E_a[density(a)] − r_tgt)²)`, where the expectation is taken
+  over the softmax routing distribution. This is differentiable end-to-end into the
+  routing decision without going through the noisy Gumbel sample.
 
 At inference, `r_tgt` is **latched** for the whole inference pass (per-inference
 consistency). Sweeping `r_tgt` traces an accuracy-vs-MACs Pareto curve with no retraining.
@@ -191,25 +194,30 @@ forcing the mask menu to differentiate into masks of varying densities.
 
 ```bash
 python main.py --arch resnet56 --dataset cifar10 \
-    --dynamic --r_min 0.3 --r_max 0.7 \
-    --gamma 2.2 --action_num 16 --epochs 400
+    --dynamic --r_min 0.1 --r_max 0.9 \
+    --gamma 10 --action_num 16 --epochs 100 \
+    --train_batch_size 2048
 ```
 
 Checkpoint → `logs/decision-16/cifar10-resnet56/sparsity-0.10/checkpoint.pth.tar`
 *(path uses the `--sparsity_level` default of 0.10 as an identifier; override with
 `--sparsity_level` if you want a different path key)*
 
-**What to watch:** the per-epoch test sweep across `r_tgt` values:
+**What to watch:** the per-epoch test sweep across `r_tgt` values (5 evenly-spaced
+points in `[r_min, r_max]`):
 
 ```text
-  [r_tgt=0.30] keep-frac=0.3012, MACs-redux=69.88%, Acc=0.8831
-  [r_tgt=0.50] keep-frac=0.4998, MACs-redux=50.02%, Acc=0.9105
-  [r_tgt=0.70] keep-frac=0.6991, MACs-redux=30.09%, Acc=0.9217
-Test sweep: mean_acc=0.9051, mean_tracking_err=0.0015
+  [r_tgt=0.10] keep-frac=0.0963, MACs-redux=90.37%, Acc=0.7218
+  [r_tgt=0.30] keep-frac=0.3205, MACs-redux=67.95%, Acc=0.8631
+  [r_tgt=0.50] keep-frac=0.5137, MACs-redux=48.63%, Acc=0.9001
+  [r_tgt=0.70] keep-frac=0.6484, MACs-redux=35.16%, Acc=0.9017
+  [r_tgt=0.90] keep-frac=0.8650, MACs-redux=13.50%, Acc=0.9251
+Test sweep: mean_acc=0.8824, mean_tracking_err=0.0756
 ```
 
-The key signal is **monotonicity**: realized keep-fraction should rise as
-`r_tgt` rises. If it is flat or non-monotone, raise `--gamma`.
+The key signal is **monotonicity**: realized keep-fraction should rise as `r_tgt` rises.
+If it is flat or non-monotone, raise `--gamma`. The best-tracking checkpoint is saved
+automatically (often around epoch 2–5); Stage 3D fine-tune then recovers accuracy from it.
 
 #### Stage 3D (optional) — Fine-tune backbone across the range
 
@@ -218,7 +226,7 @@ is recovered across the full operating range (not just one point).
 
 ```bash
 python finetune.py --arch resnet56 --dataset cifar10 --dynamic \
-    --r_min 0.3 --r_max 0.7 --action_num 16 --epochs 160
+    --r_min 0.1 --r_max 0.9 --action_num 16 --epochs 160 --sparsity_level 0.1
 ```
 
 Fine-tuned checkpoint → `logs/finetune-decision-16/cifar10-resnet56/sparsity-0.10/checkpoint.pth`
@@ -231,8 +239,8 @@ artefact needed to build the runtime power→`r_tgt` policy.
 
 ```bash
 python calibrate.py --arch resnet56 --dataset cifar10 \
-    --action_num 16 --r_min 0.3 --r_max 0.7 --grid_n 11 \
-    --finetuned --out_csv calibration.csv
+    --action_num 16 --r_min 0.1 --r_max 0.9 --grid_n 17 \
+    --finetuned --sparsity_level 0.1 --out_csv calibration.csv
 ```
 
 The script reports monotonicity. If non-monotone points appear, increase
@@ -242,18 +250,23 @@ The script reports monotonicity. If non-monotone points appear, increase
 
 `r_tgt` is **latched** at export time — each ONNX file corresponds to one
 operating point. Export once per desired point and use the calibration table
-to choose the right file at runtime.
+to choose the right file at runtime. Always export from the fine-tuned checkpoint
+(`--finetuned`) for production quality.
 
 ```bash
 python export.py --arch resnet56 --dataset cifar10 \
-    --action_num 16 --sparsity_level 0.1 --r_tgt 0.30
+    --action_num 16 --sparsity_level 0.1 --finetuned --r_tgt 0.10
 python export.py --arch resnet56 --dataset cifar10 \
-    --action_num 16 --sparsity_level 0.1 --r_tgt 0.50
+    --action_num 16 --sparsity_level 0.1 --finetuned --r_tgt 0.30
 python export.py --arch resnet56 --dataset cifar10 \
-    --action_num 16 --sparsity_level 0.1 --r_tgt 0.70
+    --action_num 16 --sparsity_level 0.1 --finetuned --r_tgt 0.50
+python export.py --arch resnet56 --dataset cifar10 \
+    --action_num 16 --sparsity_level 0.1 --finetuned --r_tgt 0.70
+python export.py --arch resnet56 --dataset cifar10 \
+    --action_num 16 --sparsity_level 0.1 --finetuned --r_tgt 0.90
 ```
 
-Outputs: `cifar10_resnet56-r0.30-single.onnx`, `cifar10_resnet56-r0.50-single.onnx`, …
+Outputs: `cifar10_resnet56-r0.10-single.onnx`, `cifar10_resnet56-r0.30-single.onnx`, …
 
 ---
 
@@ -282,7 +295,8 @@ Run the full calibration sweep, then plot the accuracy-vs-MACs-reduction curve:
 
 ```bash
 python calibrate.py --arch resnet56 --dataset cifar10 \
-    --action_num 16 --r_min 0.3 --r_max 0.7 --grid_n 11 \
+    --action_num 16 --sparsity_level 0.1 \
+    --r_min 0.1 --r_max 0.9 --grid_n 17 \
     --finetuned --out_csv calibration.csv
 ```
 
@@ -297,18 +311,18 @@ to gauge the accuracy cost of sharing weights across the range.
 | CLI flag | Paper symbol | Meaning | Default / recommended value |
 |---|---|---|---|
 | `--sparsity_level` | *r* | Target keep-fraction (static mode) or checkpoint-path key (dynamic mode) | 0.4 |
-| `--gamma` | *γ* | Regularization strength | 2.2 |
+| `--gamma` | *γ* | Regularization strength | 10 (dynamic mode), 2.2 (static mode) |
 | `--gamma_under` | — | Fraction of γ applied when sparsity is below target (static mode only) | 0.7 |
 | `--action_num` | *m* | Channel-selection masks per decision unit | 16 (dynamic), 5 (paper CIFAR) |
-| `--epochs` | — | Training epochs | 400 (Stage 2 @ batch 512), 160 (Stages 1, 3) |
+| `--epochs` | — | Training epochs | 100 (Stage 2D @ batch 2048), 160 (Stages 1, 3) |
 | `--mm` | — | SGD momentum for backbone optimizer | 0.9 |
 | `--wd` | — | Weight decay for backbone optimizer | 1e-4 (Stage 1), 1e-9 (Stage 2) |
-| `--train_batch_size` | — | Batch size | 512 |
+| `--train_batch_size` | — | Batch size | 2048 (Stage 2D dynamic), 512 (others) |
 | `--pruning_threshold` | — | Hard gate threshold at evaluation time | 0.5 |
 | `--log_interval` | — | Log every N batches | 100 |
 | `--dynamic` | — | Enable dynamic-target mode | off (static by default) |
-| `--r_min` | — | Lower bound of r_tgt training range | 0.3 |
-| `--r_max` | — | Upper bound of r_tgt training range | 0.7 |
+| `--r_min` | — | Lower bound of r_tgt training range | 0.1 |
+| `--r_max` | — | Upper bound of r_tgt training range | 0.9 |
 | `--r_endpoint_prob` | — | Per-sample probability of oversampling r_min or r_max | 0.1 |
 | `--r_tgt` | — | Latched r_tgt value for export (export.py only) | 0.5 |
 
@@ -353,5 +367,6 @@ the reported results, but are worth being aware of.
 | 4 | Regularization strength `--gamma` | 1.0 (paper) | 2.2 (empirically tuned) | Paper value causes slow sparsity convergence with batch 512; increase if sparsity takes many epochs to reach target |
 | 5 | Supported architectures | VGG16-BN, ResNet-56/50 | ResNet variants, HAR-CNN, KWS-CNN | VGG-family models not available |
 | 6 | Target-conditioned action head | Not in paper | `r_proj` (`Linear(1, action_num)`) added directly onto `fc1`'s logits | Enables runtime `r_tgt` knob; old static checkpoints with `action_num=5` are incompatible — retrain from Stage 2 |
-| 7 | Per-sample regularizer (dynamic mode) | Grand-mean Ω over whole batch | Per-sample `γ · mean((d_k − r_tgt_k)²)` using sigmoid proxy | Forces mask menu to span a range of densities; required for the knob to work |
+| 7 | Per-head expected-density regularizer (dynamic mode) | Grand-mean Ω over whole batch | Per-head `γ · mean((E_{a~probs}[density(a)] − r_tgt)²)` where `E = action_probs @ sigmoid(10·(channel_gates − 0.5))` | Differentiable path directly into action probabilities (no Gumbel sample needed); forces each head's routing distribution to track r_tgt independently rather than relying on aggregate realized density |
 | 8 | `r_tgt` threading | N/A | Via global `TorchGraph` registry (same mechanism as temperature) | Avoids changing model `forward()` signatures; `r_tgt` is latched at export time per operating point |
+| 9 | Channel-gate initialization | Not specified | Logit-inverse soft values: `v_k = 0.5 + logit(d_k)/10` with `d_k = linspace(0.1, 0.9, action_num)` | Spans full training range in the active sigmoid gradient region (~[0.28, 0.72]); all-ones init produces 3-tier collapse; binary {0,1} init saturates sigmoid gradient so CE re-collapses diversity after regularizer loss → 0 |
