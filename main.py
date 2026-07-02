@@ -65,6 +65,16 @@ parser.add_argument(
     help="Regularization balance factor γ (Eq. 1 in Wang et al. 2020).",
 )
 parser.add_argument(
+    "--lambda_div",
+    default=5.0,
+    type=float,
+    help="Gate diversity anchor strength. Directly penalises each action head's "
+    "mean density deviating from its target density (linspace(r_min, r_max, "
+    "action_num)). Independent of routing, so it keeps gate densities spread "
+    "even for rarely-selected actions where the expected-density regulariser "
+    "provides no gradient. Dynamic mode only.",
+)
+parser.add_argument(
     "--gamma_under",
     default=0.7,
     type=float,
@@ -236,8 +246,25 @@ def train(epoch):
             # (hence through fc1 + r_proj) without going through the noisy
             # Gumbel-sampled selection, giving a much cleaner gradient into
             # the routing decision itself.
+            #
+            # Gate diversity anchor: directly pins each action's mean density
+            # toward its target density (linspace(r_min, r_max, action_num)),
+            # independently of which actions are selected. Without this, the
+            # expected-density loss provides zero gradient to rarely-selected
+            # actions (gradient ∝ action_probs[k]), so CE drives those gate
+            # values wherever it likes (always toward high density for accuracy).
+            # Once gate densities cluster, the expected-density loss can still
+            # be satisfied via soft mixing during training (Gumbel-softmax), but
+            # hard argmax at test time then collapses to the few remaining density
+            # clusters — the training/inference mismatch confirmed at epoch 99
+            # (Loss_REG=0.006 yet tracking_err=0.23). The anchor keeps gate
+            # densities spread throughout training so argmax routing is correct.
             action_routing = default_graph.get_tensor_list("action_routing")
+            target_densities = torch.linspace(
+                args.r_min, args.r_max, args.action_num, device=args.device
+            )
             per_head_losses = []
+            div_losses = []
             for action_probs, channel_gates in action_routing:
                 gate_density = torch.sigmoid(
                     10.0 * (channel_gates - args.pruning_threshold)
@@ -246,7 +273,9 @@ def train(epoch):
                 per_head_losses.append(
                     (expected_density.unsqueeze(1) - r_tgt) ** 2
                 )
+                div_losses.append(((gate_density - target_densities) ** 2).mean())
             loss_reg = args.gamma * torch.cat(per_head_losses, dim=1).mean()
+            loss_div = args.lambda_div * torch.stack(div_losses).mean()
         else:
             soft_sparsity = soft.mean()  # scalar
             diff = soft_sparsity - args.sparsity_level
@@ -257,8 +286,9 @@ def train(epoch):
                 else args.gamma * args.gamma_under
             )
             loss_reg = gamma_eff * diff**2
+            loss_div = torch.tensor(0.0, device=args.device)
 
-        loss = loss_ce + loss_reg
+        loss = loss_ce + loss_reg + loss_div
 
         loss.backward()
 
@@ -327,7 +357,8 @@ def train(epoch):
             if args.dynamic:
                 mean_rtgt = r_tgt.mean().item()
                 print(
-                    "Train Epoch: %d [%d/%d]\tLoss: %.4f, Loss_CE: %.4f, Loss_REG: %.4f, "
+                    "Train Epoch: %d [%d/%d]\tLoss: %.4f, Loss_CE: %.4f, "
+                    "Loss_REG: %.4f, Loss_DIV: %.4f, "
                     "r_tgt_mean: %.4f, Sparsity: %.4f, Accuracy: %.4f"
                     % (
                         epoch,
@@ -336,6 +367,7 @@ def train(epoch):
                         loss.item(),
                         loss_ce.item(),
                         loss_reg.item(),
+                        loss_div.item(),
                         mean_rtgt,
                         sparsity,
                         acc,

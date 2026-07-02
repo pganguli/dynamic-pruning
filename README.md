@@ -195,7 +195,7 @@ forcing the mask menu to differentiate into masks of varying densities.
 ```bash
 python main.py --arch resnet56 --dataset cifar10 \
     --dynamic --r_min 0.1 --r_max 0.9 \
-    --gamma 10 --action_num 16 --epochs 100 \
+    --gamma 10 --lambda_div 5 --action_num 16 --epochs 100 \
     --train_batch_size 2048
 ```
 
@@ -311,7 +311,8 @@ to gauge the accuracy cost of sharing weights across the range.
 | CLI flag | Paper symbol | Meaning | Default / recommended value |
 |---|---|---|---|
 | `--sparsity_level` | *r* | Target keep-fraction (static mode) or checkpoint-path key (dynamic mode) | 0.4 |
-| `--gamma` | *γ* | Regularization strength | 10 (dynamic mode), 2.2 (static mode) |
+| `--gamma` | *γ* | Expected-density regularization strength | 10 (dynamic mode), 2.2 (static mode) |
+| `--lambda_div` | — | Gate diversity anchor strength (dynamic mode only). Directly penalises each action's mean density deviating from its target density (linspace(r_min, r_max, action_num)), independent of routing. Prevents the training/inference mismatch where Gumbel-softmax can satisfy Loss_REG via soft mixing even when gate densities cluster, but hard argmax at test time then collapses | 5.0 |
 | `--gamma_under` | — | Fraction of γ applied when sparsity is below target (static mode only) | 0.7 |
 | `--action_num` | *m* | Channel-selection masks per decision unit | 16 (dynamic), 5 (paper CIFAR) |
 | `--epochs` | — | Training epochs | 100 (Stage 2D @ batch 2048), 160 (Stages 1, 3) |
