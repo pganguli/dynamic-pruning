@@ -55,14 +55,18 @@ class CifarResNet(nn.Module):
         self.conv1 = nn.Conv2d(3, out_channels, kernel_size=3, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
-        self.layers = [self._make_layer(block, out_channels, num_blocks[0], stride=1)]
+        layers = [self._make_layer(block, out_channels, num_blocks[0], stride=1)]
         if len(num_blocks) >= 2:
             out_channels = 32
-            self.layers.append(self._make_layer(block, out_channels, num_blocks[1], stride=2))
+            layers.append(
+                self._make_layer(block, out_channels, num_blocks[1], stride=2)
+            )
         if len(num_blocks) >= 3:
             out_channels = 64
-            self.layers.append(self._make_layer(block, out_channels, num_blocks[2], stride=2))
-        self.layers = nn.Sequential(*self.layers)
+            layers.append(
+                self._make_layer(block, out_channels, num_blocks[2], stride=2)
+            )
+        self.layers = nn.Sequential(*layers)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.linear = nn.Linear(out_channels * block.expansion, num_classes)
 

@@ -25,12 +25,14 @@ Usage:
       --r_min 0.3 --r_max 0.7 --gamma 2.2 --action_num 16 --epochs 400
 """
 
+from collections.abc import Sized
 import torch.nn.functional as F
 import numpy as np
 import torch
 import os
 
 from decision import (
+    DecisionHead,
     default_graph,
     apply_func,
     set_deterministic_value,
@@ -272,9 +274,7 @@ def train(epoch):
                 # hit 0 under CE pressure (sigmoid'(10*(0-0.5)) ≈ 0.007).
                 gate_density = channel_gates.mean(dim=1)  # [action_num]
                 expected_density = action_probs @ gate_density  # [B]
-                per_head_losses.append(
-                    (expected_density.unsqueeze(1) - r_tgt) ** 2
-                )
+                per_head_losses.append((expected_density.unsqueeze(1) - r_tgt) ** 2)
                 div_losses.append(((gate_density - target_densities) ** 2).mean())
             loss_reg = args.gamma * torch.cat(per_head_losses, dim=1).mean()
             loss_div = args.lambda_div * torch.stack(div_losses).mean()
@@ -302,7 +302,7 @@ def train(epoch):
             r_proj_norms = []
             fc1_norms = []
             for m in model.modules():
-                if m.__class__.__name__ == "DecisionHead":
+                if isinstance(m, DecisionHead):
                     if m.r_proj.weight.grad is not None:
                         r_proj_norms.append(m.r_proj.weight.grad.norm().item())
                     if m.fc1.weight.grad is not None:
@@ -408,6 +408,9 @@ def test():
         pruning_threshold=args.pruning_threshold,
     )
 
+    assert isinstance(testloader.dataset, Sized), "test dataset must implement __len__"
+    n_test = len(testloader.dataset)
+
     if args.dynamic:
         # Sweep r_tgt over the evaluation grid; one full test-set pass per point.
         r_tgt_grid = np.linspace(args.r_min, args.r_max, _EVAL_GRID_N).tolist()
@@ -430,7 +433,7 @@ def test():
                         (cc > args.pruning_threshold).float().mean().item()
                     )
                     correct += (output.max(1)[1] == target).float().sum().item()
-            acc = correct / len(testloader.dataset)
+            acc = correct / n_test
             realized = float(np.mean(densities))
             point_results[r_val] = (realized, acc)
             print(
@@ -454,6 +457,7 @@ def test():
         test_loss_reg = []
         test_sparsity = []
         correct = 0
+        last_target: torch.Tensor | None = None
         with torch.no_grad():
             for data, target in testloader:
                 default_graph.clear_all_tensors()
@@ -485,11 +489,12 @@ def test():
 
                 pred = output.max(1)[1]
                 correct += (pred == target).float().sum().item()
+                last_target = target
 
         actions = torch.stack(default_graph.get_tensor_list("sampled_actions")).permute(
             1, 0
         )
-        acc = correct / len(testloader.dataset)
+        acc = correct / n_test
         print(
             "Test set: Loss: %.4f, Loss_CE: %.4f, Loss_REG: %.4f, "
             "Sparsity: %.4f, Accuracy: %.4f"
@@ -502,7 +507,8 @@ def test():
             )
         )
         print("   First 10 sampled actions: \n" + str(actions[:10].cpu().numpy()))
-        print("   First 10 targets: " + str(target[:10].cpu().numpy()) + "\n")
+        if last_target is not None:
+            print("   First 10 targets: " + str(last_target[:10].cpu().numpy()) + "\n")
         return acc, np.mean(test_sparsity)
 
 
@@ -530,6 +536,8 @@ for epoch in range(args.epochs):
     scheduler_gate.step()
     scheduler_model.step()
 
+    mean_tracking_err = 0.0
+    sparsity = 0.0
     if args.dynamic:
         acc = metric_a
         mean_tracking_err = metric_b

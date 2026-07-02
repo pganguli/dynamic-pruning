@@ -8,6 +8,7 @@ Requires a CUDA-capable GPU.
 Usage: python train/train_baseline.py --arch resnet10 --dataset cifar10
 """
 
+from collections.abc import Sized
 import torch.nn.functional as F
 import torch
 import os
@@ -20,7 +21,9 @@ parser = misc.get_basic_argument_parser(default_wd=1e-4)
 
 args = parser.parse_args()
 
-args.num_classes = {"cifar10": 10, "cifar100": 100, "har": 6, "kws": 12}.get(args.dataset, 10)
+args.num_classes = {"cifar10": 10, "cifar100": 100, "har": 6, "kws": 12}.get(
+    args.dataset, 10
+)
 if args.lr is None:
     args.lr = misc.learning_rate(args.arch)
 
@@ -71,6 +74,8 @@ def train(epoch):
 
 def test():
     model.eval()
+    assert isinstance(testloader.dataset, Sized), "test dataset must implement __len__"
+    n_test = len(testloader.dataset)
     test_loss = 0
     correct = 0
     with torch.no_grad():
@@ -81,8 +86,8 @@ def test():
             pred = output.max(1)[1]
             correct += (pred == target).float().sum().item()
 
-    test_loss /= len(testloader.dataset)
-    acc = correct / len(testloader.dataset)
+    test_loss /= n_test
+    acc = correct / n_test
     print("Test set: Average loss: {:.4f}, Accuracy: {:.4f}\n".format(test_loss, acc))
     return acc
 

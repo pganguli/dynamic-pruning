@@ -9,10 +9,18 @@ HARCNN: stacks ConvBlocks over (time × sensor) input and classifies activity.
 import torch
 import torch.nn as nn
 
+_Stride = int | tuple[int, int]
+
 
 class ConvBlock(nn.Module):
     def __init__(
-        self, in_channels, out_channels, kernel_size, padding, stride1=1, stride2=1
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size,
+        padding,
+        stride1: _Stride = 1,
+        stride2: _Stride = 1,
     ):
         super().__init__()
         self.conv1 = nn.Conv2d(

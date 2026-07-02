@@ -23,6 +23,7 @@ proxy. A true per-layer spatial-size-weighted MACs profile is deferred.
 """
 
 import csv
+from collections.abc import Sized
 
 import numpy as np
 import torch
@@ -134,6 +135,9 @@ print("-" * 70)
 print("  r_tgt  | keep-frac | MACs-redux | accuracy | tracking-err")
 print("-" * 70)
 
+assert isinstance(testloader.dataset, Sized), "test dataset must implement __len__"
+n_test = len(testloader.dataset)
+
 rows = []
 for r_val in r_tgt_grid:
     correct = 0
@@ -151,7 +155,7 @@ for r_val in r_tgt_grid:
             densities.append((cc > args.pruning_threshold).float().mean().item())
             correct += (output.max(1)[1] == target).float().sum().item()
 
-    acc = correct / len(testloader.dataset)
+    acc = correct / n_test
     keep_frac = float(np.mean(densities))
     macs_redux = 1.0 - keep_frac
     tracking_err = abs(keep_frac - r_val)

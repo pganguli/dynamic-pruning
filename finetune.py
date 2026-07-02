@@ -18,6 +18,7 @@ Usage:
       --r_min 0.3 --r_max 0.7 --action_num 16
 """
 
+from collections.abc import Sized
 import torch.nn.functional as F
 import numpy as np
 import torch
@@ -183,6 +184,8 @@ _EVAL_GRID_N = 5
 
 def test():
     model.eval()
+    assert isinstance(testloader.dataset, Sized), "test dataset must implement __len__"
+    n_test = len(testloader.dataset)
 
     if args.dynamic:
         r_tgt_grid = np.linspace(args.r_min, args.r_max, _EVAL_GRID_N).tolist()
@@ -204,7 +207,7 @@ def test():
                         (cc > args.pruning_threshold).float().mean().item()
                     )
                     correct += (output.max(1)[1] == target).float().sum().item()
-            acc = correct / len(testloader.dataset)
+            acc = correct / n_test
             realized = float(np.mean(densities))
             point_results[r_val] = (realized, acc)
             print(

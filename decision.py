@@ -189,7 +189,8 @@ class DecisionHead(nn.Module):
             selected_channels = self.channel_gates[sampled_actions]
         else:
             temp_list = default_graph._graph["temperature"]
-            temperature = temp_list[0] if temp_list else 1.0
+            temp_val: float = float(temp_list[0]) if temp_list else 1.0
+            temperature = torch.tensor(temp_val, device=x.device)
             m = RelaxedOneHotCategorical(temperature, action_probs)
             actions = m.rsample()
             onehot_actions = torch.zeros(actions.size()).to(x.device)

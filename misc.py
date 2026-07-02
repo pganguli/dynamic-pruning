@@ -11,6 +11,7 @@ Provides:
 """
 
 import argparse
+import logging
 from PIL import Image
 import os
 import shutil
@@ -81,12 +82,10 @@ def pil_loader(path):
 
 class Logger(object):
     def __init__(self):
-        self._logger = None
+        self._logger: "logging.Logger | None" = None
 
     def init(self, logdir, name="log"):
         if self._logger is None:
-            import logging
-
             if not os.path.exists(logdir):
                 os.makedirs(logdir)
             log_file = os.path.join(logdir, name)
@@ -446,13 +445,12 @@ def initialize_model(dataset, arch, num_classes):
     print("==> Initializing model...")
     if dataset in ["cifar10", "cifar100"]:
         model = models.__dict__["cifar_" + arch](num_classes)
-
     elif dataset in ["har"]:
         model = models.har_cnn()
-
     elif dataset in ["kws"]:
         model = models.KWS_CNN_S()
-
+    else:
+        raise ValueError(f"Unknown dataset {dataset!r}")
     return model
 
 

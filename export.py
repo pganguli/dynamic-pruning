@@ -29,9 +29,9 @@ Usage:
       --action_num 16 --r_tgt 0.7
 """
 
-import io
+import os
 import os.path
-from typing import IO
+import tempfile
 
 import torch
 import torch.onnx
@@ -48,8 +48,8 @@ from decision import (
 )
 
 
-def optimize_model(pytorch_exported_model: IO[bytes], model_name: str):
-    onnx_model = onnx.load_model(pytorch_exported_model)
+def optimize_model(input_path: str, model_name: str) -> None:
+    onnx_model = onnx.load_model(input_path)
     onnx_model = onnx.shape_inference.infer_shapes(onnx_model)
     onnx_model = onnxoptimizer.optimize(onnx_model)
     result = onnxsim.simplify(onnx_model)
@@ -117,7 +117,9 @@ def main():
             args.sparsity_level,
         )
         print("==> Loading Stage 3 fine-tuned checkpoint from %s ..." % ckpt_path)
-        state_dict = torch.load(ckpt_path, map_location=torch.device("cpu"), weights_only=True)
+        state_dict = torch.load(
+            ckpt_path, map_location=torch.device("cpu"), weights_only=True
+        )
         model.load_state_dict(state_dict)
     else:
         print("==> Loading Stage 2 checkpoint...")
@@ -138,27 +140,33 @@ def main():
         torch.full((1, 1), args.r_tgt),  # batch size 1 matches the single-input export
     )
 
-    pytorch_exported_model_single = io.BytesIO()
-    pytorch_exported_model_batched = io.BytesIO()
-
     if args.dataset.startswith("cifar"):
         dummy_input = torch.zeros((1, 3, 32, 32))
     elif args.dataset == "har":
         dummy_input = torch.zeros((1, 9, 128))
     elif args.dataset == "kws":
         dummy_input = torch.zeros((1, 1, 25, 10))
+    else:
+        raise ValueError("Unknown dataset: %s" % args.dataset)
 
     onnx_opset = 17
+    stem = f"{args.dataset}_{args.arch}-r{args.r_tgt:.2f}"
 
     # Single-input export: pruning_threshold left at 0 (soft fractional gates).
     # On-device (NodPA) the decision-map generator applies its own thresholding in C.
-    torch.onnx.export(
-        model,
-        dummy_input,
-        pytorch_exported_model_single,
-        opset_version=onnx_opset,
-        dynamo=False,
-    )
+    with tempfile.NamedTemporaryFile(suffix=".onnx", delete=False) as tmp:
+        tmp_single = tmp.name
+    try:
+        torch.onnx.export(
+            model,
+            (dummy_input,),
+            tmp_single,
+            opset_version=onnx_opset,
+            dynamo=False,
+        )
+        optimize_model(tmp_single, f"{stem}-single.onnx")
+    finally:
+        os.unlink(tmp_single)
 
     # Switch to hard 0/1 gates before the batched export so ONNX-runtime evaluation
     # uses the same threshold as the training-time sparsity metric.
@@ -169,24 +177,23 @@ def main():
         pruning_threshold=args.pruning_threshold,
     )
 
-    torch.onnx.export(
-        model,
-        dummy_input,
-        pytorch_exported_model_batched,
-        opset_version=onnx_opset,
-        dynamo=False,
-        input_names=["input.1"],
-        dynamic_axes={
-            "input.1": {0: "N"},
-        },
-    )
-
-    pytorch_exported_model_single.seek(0)
-    pytorch_exported_model_batched.seek(0)
-
-    stem = f"{args.dataset}_{args.arch}-r{args.r_tgt:.2f}"
-    optimize_model(pytorch_exported_model_single, f"{stem}-single.onnx")
-    optimize_model(pytorch_exported_model_batched, f"{stem}-batched.onnx")
+    with tempfile.NamedTemporaryFile(suffix=".onnx", delete=False) as tmp:
+        tmp_batched = tmp.name
+    try:
+        torch.onnx.export(
+            model,
+            (dummy_input,),
+            tmp_batched,
+            opset_version=onnx_opset,
+            dynamo=False,
+            input_names=["input.1"],
+            dynamic_axes={
+                "input.1": {0: "N"},
+            },
+        )
+        optimize_model(tmp_batched, f"{stem}-batched.onnx")
+    finally:
+        os.unlink(tmp_batched)
 
 
 if __name__ == "__main__":
