@@ -66,13 +66,13 @@ parser.add_argument(
 )
 parser.add_argument(
     "--lambda_div",
-    default=5.0,
+    default=20.0,
     type=float,
     help="Gate diversity anchor strength. Directly penalises each action head's "
-    "mean density deviating from its target density (linspace(r_min, r_max, "
-    "action_num)). Independent of routing, so it keeps gate densities spread "
-    "even for rarely-selected actions where the expected-density regulariser "
-    "provides no gradient. Dynamic mode only.",
+    "mean gate value deviating from its target density (linspace(r_min, r_max, "
+    "action_num)). Uses raw mean of gate values (not sigmoid proxy), so the "
+    "gradient is constant — no sigmoid_prime vanishing when gate values drift "
+    "to 0 or 1 under CE pressure. Dynamic mode only.",
 )
 parser.add_argument(
     "--gamma_under",
@@ -266,9 +266,11 @@ def train(epoch):
             per_head_losses = []
             div_losses = []
             for action_probs, channel_gates in action_routing:
-                gate_density = torch.sigmoid(
-                    10.0 * (channel_gates - args.pruning_threshold)
-                ).mean(dim=1)  # [action_num]
+                # Raw mean of gate values (in [0,1] after clamp) — no sigmoid.
+                # Gradient into channel_gates is constant: 2*(density-target)/C,
+                # vs sigmoid-based which collapses to ~1e-5 when gate values
+                # hit 0 under CE pressure (sigmoid'(10*(0-0.5)) ≈ 0.007).
+                gate_density = channel_gates.mean(dim=1)  # [action_num]
                 expected_density = action_probs @ gate_density  # [B]
                 per_head_losses.append(
                     (expected_density.unsqueeze(1) - r_tgt) ** 2
