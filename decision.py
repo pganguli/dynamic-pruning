@@ -102,16 +102,29 @@ class DecisionHead(nn.Module):
         # full-strength, undiluted gradient into every action logit.
         self.r_proj = nn.Linear(1, action_num, bias=True)
         self.relu = nn.ReLU()
-        # Initialize gate densities spread uniformly across [0.1, 0.9] using the
-        # logit-inverse mapping: v_k = 0.5 + logit(d_k)/10 gives exactly density
-        # d_k under sigmoid(10*(v - 0.5)), and all values land in ~[0.28, 0.72]
-        # — well inside the active gradient region. Binary {0, 1} init saturates
-        # the sigmoid (gradient ≈ 0), so CE re-collapses gate diversity as soon
-        # as Loss_REG → 0; soft init keeps gradients live throughout training.
+        # Initialize each action's gate row as a genuinely BIMODAL split
+        # (not a uniform value) so its hard-threshold-above-0.5 fraction
+        # already matches its target density at init. A uniform-value row
+        # (e.g. all channels at 0.28) has the right *mean* for a low target
+        # density but the WRONG hard-threshold fraction (0%, since every
+        # channel sits below 0.5) — this mismatch between "mean value" and
+        # "fraction above threshold" is what let raw-mean-based losses
+        # collapse the whole row toward 0 or 1 while reporting deceptively
+        # small loss (confirmed empirically: Loss_DIV kept shrinking while
+        # realized keep-frac hit exactly 0.0000, an impossible outcome if
+        # the loss actually tracked the real train/test metric). Assigning
+        # round(d_k * out_channels) channels to ~0.8 and the rest to ~0.2
+        # makes the hard-threshold fraction match d_k from the start, and
+        # gradient descent only needs to nudge individual channels across
+        # the 0.5 boundary rather than discover bimodality from scratch.
         target_densities = torch.linspace(0.1, 0.9, action_num)
-        gate_values = 0.5 + torch.logit(target_densities) / 10.0  # [action_num]
-        gate_init = gate_values.unsqueeze(1).expand(-1, out_channels).clone()
-        gate_init = gate_init + 0.01 * torch.randn_like(gate_init)
+        gate_init = torch.full((action_num, out_channels), 0.2)
+        for k in range(action_num):
+            n_high = int(round(target_densities[k].item() * out_channels))
+            high_idx = torch.randperm(out_channels)[:n_high]
+            gate_init[k, high_idx] = 0.8
+        gate_init = gate_init + 0.02 * torch.randn_like(gate_init)
+        gate_init = gate_init.clamp(0.0, 1.0)
         self.channel_gates = nn.Parameter(gate_init)
         self.pruning_threshold = pruning_threshold
 

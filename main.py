@@ -296,11 +296,28 @@ def train(epoch):
             div_losses = []
             balance_losses = []
             for action_probs, channel_gates in action_routing:
-                # Raw mean of gate values (in [0,1] after clamp) — no sigmoid.
-                # Gradient into channel_gates is constant: 2*(density-target)/C,
-                # vs sigmoid-based which collapses to ~1e-5 when gate values
-                # hit 0 under CE pressure (sigmoid'(10*(0-0.5)) ≈ 0.007).
-                gate_density = channel_gates.mean(dim=1)  # [action_num]
+                # Straight-through thresholded density: forward pass is the
+                # EXACT hard fraction-above-threshold used by the test-time
+                # metric ((cc > pruning_threshold).float().mean()), so the
+                # loss optimizes precisely what gets measured/deployed — no
+                # train/test mismatch. Backward pass substitutes a soft
+                # sigmoid gradient (gentle slope 4, not 10) so individual
+                # gate values near the boundary still get a pull.
+                #
+                # Raw channel_gates.mean(dim=1) (a prior version of this
+                # loss) doesn't distinguish "all channels uniformly at 0.1"
+                # (0% hard-threshold density: every channel below 0.5) from
+                # "10% of channels at 1.0, 90% at 0.0" (correct 10% hard
+                # density) — both have the same mean. Nothing punished the
+                # former, so gradient descent collapsed rows to a uniform
+                # low value instead of the bimodal split threshold-based
+                # pruning actually needs, and the raw-mean loss reported
+                # deceptively small values as it did so (confirmed: realized
+                # keep-frac hit exactly 0.0000 while Loss_DIV kept shrinking).
+                hard_gate = (channel_gates > args.pruning_threshold).float()
+                soft_gate = torch.sigmoid(4.0 * (channel_gates - args.pruning_threshold))
+                gate_indicator = (hard_gate - soft_gate).detach() + soft_gate
+                gate_density = gate_indicator.mean(dim=1)  # [action_num]
                 expected_density = action_probs @ gate_density  # [B]
                 per_head_losses.append((expected_density.unsqueeze(1) - r_tgt) ** 2)
                 # Sum (not mean) over the action_num dimension: averaging here
