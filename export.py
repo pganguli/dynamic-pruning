@@ -1,32 +1,28 @@
 """
 Export a trained dynamic-pruning model to ONNX.
 
-Loads a Stage 2 (or Stage 3 fine-tuned) checkpoint, latches a target keep-fraction
-r_tgt in the TorchGraph registry, then exports two ONNX files per operating point:
+Loads a Stage 2 (or Stage 3 fine-tuned) checkpoint and exports two ONNX files,
+each taking TWO graph inputs — the image and r_tgt — so a single exported
+model covers the entire operating range; no per-r_tgt re-export needed:
 
-  <dataset>_<arch>-r<r_tgt>-single.onnx   batch=1, pruning_threshold=0 (soft gates)
-  <dataset>_<arch>-r<r_tgt>-batched.onnx  dynamic batch, hard gates at pruning_threshold
+  <dataset>_<arch>-dynamic-single.onnx   batch=1, pruning_threshold=0 (soft gates)
+  <dataset>_<arch>-dynamic-batched.onnx  dynamic batch, hard gates at pruning_threshold
 
 The single-input file is intended for on-device inference where the NodPA runtime
 re-implements the decision-map generation in C and applies its own thresholding.
 The batched file uses hard 0/1 gates (values below pruning_threshold zeroed) and is
 suitable for accuracy evaluation via ONNX runtime.
 
-r_tgt is baked into the graph at tracing time (it is a Python-side constant read from
-TorchGraph, not a model input tensor). Export once per desired operating point.
+r_tgt is threaded through training via a Python-side TorchGraph registry (see
+decision.py), not a forward() argument, so it would normally be baked into the
+ONNX graph as a constant at trace time. ExportWrapper below routes r_tgt through
+the traced forward() call itself — setting the registry from inside the traced
+function, not before it — so the exporter captures it as a genuine second graph
+input instead of a frozen constant.
 
 Usage:
-  # Static model (one operating point)
-  python export.py --arch resnet56 --dataset cifar10 \
-      --sparsity_level 0.4 --action_num 16 --r_tgt 0.4
-
-  # Dynamic model — export several operating points
-  python export.py --arch resnet56 --dataset cifar10 \
-      --action_num 16 --r_tgt 0.3
-  python export.py --arch resnet56 --dataset cifar10 \
-      --action_num 16 --r_tgt 0.5
-  python export.py --arch resnet56 --dataset cifar10 \
-      --action_num 16 --r_tgt 0.7
+  python export.py --arch resnet56 --dataset cifar10 --action_num 16
+  python export.py --arch resnet56 --dataset cifar10 --action_num 16 --finetuned
 """
 
 import os
@@ -34,6 +30,7 @@ import os.path
 import tempfile
 
 import torch
+import torch.nn as nn
 import torch.onnx
 import onnx
 import onnxoptimizer
@@ -46,6 +43,20 @@ from decision import (
     set_deterministic_value,
     set_pruning_threshold,
 )
+
+
+class ExportWrapper(nn.Module):
+    """Routes r_tgt through the traced forward() call so ONNX export captures
+    it as a genuine graph input rather than a constant frozen at trace time."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, x, r_tgt):
+        default_graph.clear_tensor_list("r_tgt")
+        default_graph.append_tensor("r_tgt", r_tgt)
+        return self.model(x)
 
 
 def optimize_model(input_path: str, model_name: str) -> None:
@@ -67,16 +78,6 @@ def main():
         type=int,
         help="Must match the value used in Stage 2. "
         "Defaults to architecture-specific value.",
-    )
-    parser.add_argument(
-        "--r_tgt",
-        default=0.5,
-        type=float,
-        help="Target keep-fraction to latch for this export. The "
-        "conditioned action head bakes this value into the ONNX "
-        "graph at tracing time. Export once per desired operating "
-        "point. The on-device decision-map generator must mirror "
-        "this value (see spec Step 7).",
     )
     parser.add_argument(
         "--finetuned",
@@ -130,15 +131,7 @@ def main():
         )
         model.load_state_dict(checkpoint["state_dict"])
 
-    # Latch r_tgt in the registry so tracing bakes this operating point into
-    # the ONNX graph. Run export.py once per r_tgt to cover multiple points.
-    # The on-device decision-map generator must be updated to mirror this value
-    # (see spec Step 7 — NodPA on-device integration).
-    default_graph.clear_tensor_list("r_tgt")
-    default_graph.append_tensor(
-        "r_tgt",
-        torch.full((1, 1), args.r_tgt),  # batch size 1 matches the single-input export
-    )
+    wrapped = ExportWrapper(model)
 
     if args.dataset.startswith("cifar"):
         dummy_input = torch.zeros((1, 3, 32, 32))
@@ -148,9 +141,10 @@ def main():
         dummy_input = torch.zeros((1, 1, 25, 10))
     else:
         raise ValueError("Unknown dataset: %s" % args.dataset)
+    dummy_r_tgt = torch.full((1, 1), 0.5)
 
     onnx_opset = 17
-    stem = f"{args.dataset}_{args.arch}-r{args.r_tgt:.2f}"
+    stem = f"{args.dataset}_{args.arch}-dynamic"
 
     # Single-input export: pruning_threshold left at 0 (soft fractional gates).
     # On-device (NodPA) the decision-map generator applies its own thresholding in C.
@@ -158,11 +152,12 @@ def main():
         tmp_single = tmp.name
     try:
         torch.onnx.export(
-            model,
-            (dummy_input,),
+            wrapped,
+            (dummy_input, dummy_r_tgt),
             tmp_single,
             opset_version=onnx_opset,
             dynamo=False,
+            input_names=["input.1", "r_tgt"],
         )
         optimize_model(tmp_single, f"{stem}-single.onnx")
     finally:
@@ -181,14 +176,15 @@ def main():
         tmp_batched = tmp.name
     try:
         torch.onnx.export(
-            model,
-            (dummy_input,),
+            wrapped,
+            (dummy_input, dummy_r_tgt),
             tmp_batched,
             opset_version=onnx_opset,
             dynamo=False,
-            input_names=["input.1"],
+            input_names=["input.1", "r_tgt"],
             dynamic_axes={
                 "input.1": {0: "N"},
+                "r_tgt": {0: "N"},
             },
         )
         optimize_model(tmp_batched, f"{stem}-batched.onnx")

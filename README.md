@@ -175,10 +175,14 @@ Fine-tuned checkpoint → `logs/finetune-decision-16/cifar10-resnet56/sparsity-0
 
 ```bash
 python export.py --arch resnet56 --dataset cifar10 \
-    --sparsity_level 0.4 --action_num 16 --r_tgt 0.4
+    --sparsity_level 0.4 --action_num 16
 ```
 
-Outputs: `cifar10_resnet56-r0.40-single.onnx`, `cifar10_resnet56-r0.40-batched.onnx`
+Outputs: `cifar10_resnet56-dynamic-single.onnx`, `cifar10_resnet56-dynamic-batched.onnx`.
+Both take `r_tgt` as a genuine second graph input (see Stage 5D below) even for a
+statically-trained checkpoint — varying it won't do anything useful since the head
+never saw a range of r_tgt during static training, but the exported graph shape is
+the same either way.
 
 ---
 
@@ -248,25 +252,23 @@ The script reports monotonicity. If non-monotone points appear, increase
 
 #### Stage 5D — Export to ONNX
 
-`r_tgt` is **latched** at export time — each ONNX file corresponds to one
-operating point. Export once per desired point and use the calibration table
-to choose the right file at runtime. Always export from the fine-tuned checkpoint
+A **single export** produces a model that takes `r_tgt` as a genuine second
+graph input alongside the image — no per-operating-point re-export needed.
+`ExportWrapper` (in `export.py`) routes `r_tgt` through the traced `forward()`
+call itself (rather than pre-latching it into the `TorchGraph` registry before
+tracing), so the ONNX exporter captures it as a real input tensor instead of
+baking in a frozen constant. Always export from the fine-tuned checkpoint
 (`--finetuned`) for production quality.
 
 ```bash
 python export.py --arch resnet56 --dataset cifar10 \
-    --action_num 16 --sparsity_level 0.1 --finetuned --r_tgt 0.10
-python export.py --arch resnet56 --dataset cifar10 \
-    --action_num 16 --sparsity_level 0.1 --finetuned --r_tgt 0.30
-python export.py --arch resnet56 --dataset cifar10 \
-    --action_num 16 --sparsity_level 0.1 --finetuned --r_tgt 0.50
-python export.py --arch resnet56 --dataset cifar10 \
-    --action_num 16 --sparsity_level 0.1 --finetuned --r_tgt 0.70
-python export.py --arch resnet56 --dataset cifar10 \
-    --action_num 16 --sparsity_level 0.1 --finetuned --r_tgt 0.90
+    --action_num 16 --sparsity_level 0.1 --finetuned
 ```
 
-Outputs: `cifar10_resnet56-r0.10-single.onnx`, `cifar10_resnet56-r0.30-single.onnx`, …
+Outputs: `cifar10_resnet56-dynamic-single.onnx`, `cifar10_resnet56-dynamic-batched.onnx`.
+At inference time, feed `(image, r_tgt)` to either file — varying `r_tgt` per call
+trades accuracy for MACs on the same loaded model, using the calibration table
+to pick the operating point for a given power/latency budget.
 
 ---
 
@@ -326,7 +328,6 @@ to gauge the accuracy cost of sharing weights across the range.
 | `--r_min` | — | Lower bound of r_tgt training range | 0.1 |
 | `--r_max` | — | Upper bound of r_tgt training range | 0.9 |
 | `--r_endpoint_prob` | — | Per-sample probability of oversampling r_min or r_max | 0.1 |
-| `--r_tgt` | — | Latched r_tgt value for export (export.py only) | 0.5 |
 
 Temperature τ is not a CLI flag — it is annealed automatically from 5.0 to 0.5
 linearly over `--epochs`, matching the paper's Implementation Details section.
@@ -370,7 +371,8 @@ the reported results, but are worth being aware of.
 | 5 | Supported architectures | VGG16-BN, ResNet-56/50 | ResNet variants, HAR-CNN, KWS-CNN | VGG-family models not available |
 | 6 | Target-conditioned action head | Not in paper | `r_proj` (`Linear(1, action_num)`) added directly onto `fc1`'s logits | Enables runtime `r_tgt` knob; old static checkpoints with `action_num=5` are incompatible — retrain from Stage 2 |
 | 7 | Per-head expected-density regularizer (dynamic mode) | Grand-mean Ω over whole batch | Per-head `γ · mean((E_{a~probs}[density(a)] − r_tgt)²)` where `E = action_probs @ gate_density` and `gate_density` is a straight-through hard-threshold fraction (forward = exact `(channel_gates > pruning_threshold).mean(dim=1)`, backward = sigmoid slope 4 gradient) | Differentiable path directly into action probabilities (no Gumbel sample needed); forces each head's routing distribution to track r_tgt independently. Using the *exact* test-time threshold formula (not a raw mean or looser sigmoid proxy) in the forward pass eliminates a train/test mismatch that let gate rows collapse to a uniform low value while reporting a deceptively small loss |
-| 8 | `r_tgt` threading | N/A | Via global `TorchGraph` registry (same mechanism as temperature) | Avoids changing model `forward()` signatures; `r_tgt` is latched at export time per operating point |
+| 8 | `r_tgt` threading (training/eval) | N/A | Via global `TorchGraph` registry (same mechanism as temperature) | Avoids changing model `forward()` signatures during training/eval scripts |
+| 12 | `r_tgt` threading (export) | N/A | `ExportWrapper` (export.py) accepts `(x, r_tgt)` and sets the `TorchGraph` registry from *inside* the traced `forward()` call | Setting the registry before tracing (the original approach) bakes whatever value was latched in as an ONNX constant, requiring one export per operating point. Setting it inside the traced call makes the exporter capture `r_tgt` as a genuine second graph input — a single exported model covers the full `[r_min, r_max]` range |
 | 9 | Channel-gate initialization | Not specified | Bimodal per-action split: `round(d_k * out_channels)` channels init to ~0.8, rest to ~0.2, with `d_k = linspace(0.1, 0.9, action_num)` | A uniform-value row (all channels at the same value) has the right *mean* density but the wrong *hard-threshold* density (0% or 100%, since every channel is on the same side of 0.5). The bimodal split matches the target density under hard thresholding from the start, so training only needs to nudge individual channels across the boundary rather than discover bimodality from scratch |
 | 10 | Gate diversity anchor (dynamic mode) | Not in paper | `λ_div · sum_k((gate_density_k − target_density_k)²)`, summed (not averaged) over actions, then averaged over heads, independent of routing | Without this, actions that routing rarely selects get ~zero gradient from the expected-density loss (∝ action_probs), so CE drifts their gate values toward whatever maximizes accuracy, collapsing the density menu. Summing over actions (rather than averaging) avoids diluting any single action's correction signal by 1/action_num before the head-average dilutes it again |
 | 11 | Load-balancing loss (dynamic mode) | Not in paper | Switch-Transformer-style: `λ_balance · action_num · sum_k f_k · P_k`, `f_k` detached hard-routed fraction, `P_k` mean softmax probability | Prevents routing from collapsing onto a handful of the `action_num` actions (rich-get-richer gradient concentration) even when gate densities are correctly spread by the diversity anchor |
