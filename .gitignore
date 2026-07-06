@@ -218,3 +218,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project artifacts (dynamic-pruning)
+#   Training outputs: checkpoints, text logs, and TensorBoard event files
+#   under logs/<stage>/.../tb (see dynamic_pruning/checkpoints.py + logging_utils.py).
+logs/
+#   Downloaded/cached datasets (torchvision CIFAR-10/100 root; see data.py).
+data/
+#   Cloned upstream repos required for HAR/KWS preprocessing (see data.py).
+dnn-models/
+#   Optuna study storage (configs/scenario/tune.yaml's sqlite:///optuna.db).
+optuna.db
+#   Stage 4D calibration sweep output (configs/scenario/calibrate.yaml's out_csv).
+calibration.csv
+#   Stage 5 ONNX export artifacts (dynamic_pruning/export.py).
+*.onnx
