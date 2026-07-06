@@ -280,6 +280,11 @@ If it is flat or non-monotone, raise `decision.gamma`, `decision.lambda_div`, or
 The best-tracking checkpoint is saved automatically (often around epoch 2–5);
 Stage 3D fine-tune then recovers accuracy from it.
 
+Note: the `MACs-redux` shown during training is the cheap `1 - keep_frac` proxy
+(channel-count-weighted, ignores per-layer spatial size and decision-head cost) —
+good enough for a live progress readout. For real MACs accounting (accounting for
+the decision heads' own compute), use Stage 4D's calibration sweep below.
+
 #### Stage 3D (optional) — Fine-tune backbone across the range
 
 Fine-tunes the backbone with `r_tgt` still sampled per batch, so accuracy
@@ -294,8 +299,8 @@ Fine-tuned checkpoint → `logs/finetune-decision-16/cifar10-resnet56/sparsity-0
 #### Stage 4D — Calibrate
 
 Sweeps `r_tgt` over a fine grid on the test set and emits the calibration table
-(`r_tgt → keep-fraction, MACs-reduction, accuracy`). This table is the offline
-artefact needed to build the runtime power→`r_tgt` policy.
+(`r_tgt → keep-fraction, MACs-reduction, decision-head overhead, accuracy`). This
+table is the offline artefact needed to build the runtime power→`r_tgt` policy.
 
 ```bash
 python scripts/calibrate.py
@@ -303,6 +308,25 @@ python scripts/calibrate.py
 
 The script reports monotonicity. If non-monotone points appear, increase
 `decision.gamma` (or `lambda_div`/`lambda_balance`) in Stage 2D and retrain.
+
+**MACs accounting** (`dynamic_pruning/macs.py`): the channel gating in
+`decision.py` masks conv activations by multiplication, so a naive PyTorch
+forward pass runs every conv at full dense cost regardless of `r_tgt` — profiling
+the executed graph directly would show *zero* savings and only the decision
+heads' extra compute. Instead, `calibrate.py` profiles the dense (un-pruned)
+per-module MACs once via `profile_dense_macs`, measures each `DecisionHead`'s
+realized keep-fraction per r_tgt via forward hooks, and combines them in
+`macs_report` to estimate the MACs an on-device deployment would achieve *if*
+channel pruning were structurally realized (skipping pruned channels' compute,
+as the NodPA C port does) — separately reporting:
+
+- `MACs-redux`: net MACs saved vs. a no-pruning baseline at that operating point
+- `head-overhead`: the decision heads' own compute, as a fraction of that
+  baseline, paid in full regardless of `r_tgt`
+
+If `head-overhead` ever exceeds `MACs-redux` at some `r_tgt`, the decision heads
+are costing more than the pruning saves at that operating point — `calibrate.py`
+flags this explicitly.
 
 #### Stage 5D — Export to ONNX
 
@@ -352,7 +376,7 @@ plot the accuracy-vs-MACs-reduction curve:
 python scripts/calibrate.py
 ```
 
-The CSV columns are `r_tgt, keep_frac, macs_redux, accuracy, tracking_err`.
+The CSV columns are `r_tgt, keep_frac, macs_redux, head_overhead, accuracy, tracking_err`.
 Plot `macs_redux` (x-axis) vs `accuracy` (y-axis) for the Pareto curve.
 A well-trained dynamic model should trace a smooth, monotone curve. Compare
 against a set of separately-trained static models (one per operating point)

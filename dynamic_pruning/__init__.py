@@ -11,6 +11,7 @@ Submodules:
   data            dataset loading (CIFAR-10/100, HAR, KWS)
   decision        TorchGraph registry + DecisionHead gating logic
   logging_utils   console/file/TensorBoard run logging
+  macs            end-to-end MACs accounting (backbone + decision-head overhead)
   models          backbone architectures (ResNet, HAR-CNN, KWS-CNN)
   training        Stage 1/2/2D/3/3D training loops
   calibrate       Stage 4D r_tgt calibration sweep
@@ -26,6 +27,7 @@ from . import (
     decision,
     export,
     logging_utils,
+    macs,
     models,
     optuna_search,
     training,
@@ -41,6 +43,7 @@ __all__ = [
     "decision",
     "export",
     "logging_utils",
+    "macs",
     "models",
     "optuna_search",
     "training",
