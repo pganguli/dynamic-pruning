@@ -178,9 +178,11 @@ def register_configs() -> None:
     Call once, before @hydra.main runs, from each script in scripts/. YAML
     files under configs/ are validated against these schemas at compose time.
     """
-    from ._compat import patch_argparse_check_help
+    from ._compat import _safe_check_help, argparse
 
-    patch_argparse_check_help()
+    assert getattr(argparse.ArgumentParser, "_check_help") is _safe_check_help, (
+        "Patching argparse failed"
+    )
 
     cs = ConfigStore.instance()
     cs.store(name="pretrain_schema", node=PretrainConfig)

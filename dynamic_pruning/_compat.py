@@ -11,21 +11,16 @@ step with no effect on actual parsing, so skipping it on failure is safe.
 """
 
 import argparse
-from typing import Any, cast
 
-_parser_cls = cast(Any, argparse.ArgumentParser)
-
-_original_check_help = _parser_cls._check_help
+_original = getattr(argparse.ArgumentParser, "_check_help")
 
 
-def patch_argparse_check_help() -> None:
-    if _parser_cls._check_help is not _original_check_help:
+def _safe_check_help(self, action):
+    try:
+        return _original(self, action)
+    except TypeError:
+        # ignore Hydra LazyCompletionHelp incompatibility
         return
 
-    def _check_help(self, action):
-        try:
-            _original_check_help(self, action)
-        except TypeError:
-            return
 
-    _parser_cls._check_help = _check_help
+setattr(argparse.ArgumentParser, "_check_help", _safe_check_help)
