@@ -1,0 +1,2 @@
+arch: har_cnn
+dropout_prob: 0.0

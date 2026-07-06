@@ -1,0 +1,33 @@
+# @package _global_
+# Optuna search over gamma / lambda_div / lambda_balance / lr for Stage 2D.
+# Each trial runs an abbreviated `epochs_per_trial`-epoch dynamic-training
+# run; only the objective (combined tracking-error + accuracy) is searched
+# over — everything else in `train:` below is the base config each trial
+# starts from (see dynamic_pruning/optuna_search.py).
+defaults:
+  - /optuna_schema
+  - _self_
+
+n_trials: 30
+epochs_per_trial: 8
+study_name: dynamic_pruning_search
+storage: sqlite:///optuna.db # persists progress; resumable across runs
+
+train:
+  dynamic: true
+  sparsity_level: 0.1
+  data:
+    name: cifar10
+    train_batch_size: 2048
+  model:
+    arch: resnet56
+  decision:
+    action_num: 16
+    pruning_threshold: 0.5
+  dynamic_range:
+    r_min: 0.1
+    r_max: 0.9
+    r_endpoint_prob: 0.1
+  optim:
+    weight_decay: 1e-9
+    label_smoothing: 0.1

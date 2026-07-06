@@ -1,0 +1,14 @@
+# @package _global_
+# Stage 5 — export the (image, r_tgt) -> output model to ONNX.
+defaults:
+  - /export_schema
+  - /data: cifar10
+  - /model: resnet56
+  - _self_
+
+sparsity_level: 0.1
+finetuned: true
+
+decision:
+  action_num: 16
+  pruning_threshold: 0.5

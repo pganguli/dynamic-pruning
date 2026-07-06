@@ -1,0 +1,20 @@
+# @package _global_
+# Stage 4D — calibration sweep over r_tgt for a fine-tuned dynamic checkpoint.
+defaults:
+  - /calibrate_schema
+  - /data: cifar10
+  - /model: resnet56
+  - _self_
+
+sparsity_level: 0.1
+grid_n: 17
+finetuned: true
+out_csv: calibration.csv
+
+decision:
+  action_num: 16
+  pruning_threshold: 0.5
+
+dynamic_range:
+  r_min: 0.1
+  r_max: 0.9

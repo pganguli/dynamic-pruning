@@ -1,0 +1,26 @@
+# @package _global_
+# Stage 2 — static single-operating-point joint decision-head + backbone training.
+defaults:
+  - /train_schema
+  - /data: cifar10
+  - /model: resnet56
+  - _self_
+
+dynamic: false
+sparsity_level: 0.4
+epochs: 400
+log_interval: 100
+seed: 0
+
+data:
+  train_batch_size: 512
+
+decision:
+  action_num: 40
+  pruning_threshold: 0.5
+  gamma: 2.2
+  gamma_under: 0.7
+
+optim:
+  weight_decay: 1e-9
+  label_smoothing: 0.1

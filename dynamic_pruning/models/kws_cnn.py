@@ -11,8 +11,8 @@ from .har_cnn import ConvBlock
 
 
 class KWS_CNN_S(nn.Module):
-    def __init__(self, n_channels=1):
-        super(KWS_CNN_S, self).__init__()
+    def __init__(self, n_channels=1, dropout_prob=0.0):
+        super().__init__()
         self.conv1 = ConvBlock(
             in_channels=n_channels,
             out_channels=28,
@@ -20,6 +20,7 @@ class KWS_CNN_S(nn.Module):
             padding=0,
             stride1=1,
             stride2=(2, 1),
+            dropout_prob=dropout_prob,
         )
         self.ip1 = nn.Linear(2 * 2 * 28, 16)
         self.ip2 = nn.Linear(16, 128)

@@ -1,0 +1,2 @@
+arch: resnet20
+dropout_prob: 0.0

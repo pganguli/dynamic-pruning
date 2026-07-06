@@ -1,0 +1,35 @@
+# @package _global_
+# Stage 2D — dynamic-target joint decision-head + backbone training.
+# Produces a single model whose realized keep-fraction follows r_tgt at
+# inference time. Defaults below are the values validated in this project's
+# training runs (see README.md "Deviations from the paper").
+defaults:
+  - /train_schema
+  - /data: cifar10
+  - /model: resnet56
+  - _self_
+
+dynamic: true
+sparsity_level: 0.1 # dynamic mode: only used as the checkpoint-path key
+epochs: 100
+log_interval: 100
+seed: 0
+
+data:
+  train_batch_size: 2048
+
+decision:
+  action_num: 16
+  pruning_threshold: 0.5
+  gamma: 10.0
+  lambda_div: 20.0
+  lambda_balance: 0.5
+
+dynamic_range:
+  r_min: 0.1
+  r_max: 0.9
+  r_endpoint_prob: 0.1
+
+optim:
+  weight_decay: 1e-9
+  label_smoothing: 0.1

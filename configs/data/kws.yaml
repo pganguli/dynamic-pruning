@@ -1,0 +1,4 @@
+name: kws
+num_classes: 12
+train_batch_size: 512
+test_batch_size: 100

@@ -7,19 +7,26 @@ ResNet: parametric ResNet builder (ResNet-10, ResNet-18, etc.) where the
 """
 
 import math
+
 import torch.nn as nn
 
 
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, in_planes, planes, stride=1):
-        super(BasicBlock, self).__init__()
+    def __init__(self, in_planes, planes, stride=1, dropout_prob=0.0):
+        super().__init__()
         self.conv1 = nn.Conv2d(
             in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
         )
         self.bn1 = nn.BatchNorm2d(planes)
         self.relu = nn.ReLU(inplace=True)
+        # Dropout2d(p=0) is a no-op, so this is always safe to construct;
+        # only train_baseline.py (Stage 1, no channel-gating yet) passes a
+        # nonzero dropout_prob. Has no learnable parameters, so it adds no
+        # state_dict keys and can't break checkpoint compatibility with
+        # main.py/finetune.py, which never pass this argument (default 0.0).
+        self.dropout = nn.Dropout2d(p=dropout_prob)
         self.conv2 = nn.Conv2d(
             planes, planes, kernel_size=3, stride=1, padding=1, bias=False
         )
@@ -40,6 +47,7 @@ class BasicBlock(nn.Module):
 
     def forward(self, x):
         out = self.relu(self.bn1(self.conv1(x)))
+        out = self.dropout(out)
         out = self.bn2(self.conv2(out))
         out += self.shortcut(x)
         out = self.relu(out)
@@ -47,9 +55,10 @@ class BasicBlock(nn.Module):
 
 
 class CifarResNet(nn.Module):
-    def __init__(self, block, num_blocks, num_classes=10):
-        super(CifarResNet, self).__init__()
+    def __init__(self, block, num_blocks, num_classes=10, dropout_prob=0.0):
+        super().__init__()
         self.in_planes = 16
+        self.dropout_prob = dropout_prob
 
         out_channels = 16
         self.conv1 = nn.Conv2d(3, out_channels, kernel_size=3, padding=1, bias=False)
@@ -82,7 +91,9 @@ class CifarResNet(nn.Module):
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
         for stride in strides:
-            layers.append(block(self.in_planes, planes, stride))
+            layers.append(
+                block(self.in_planes, planes, stride, dropout_prob=self.dropout_prob)
+            )
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
 
@@ -95,13 +106,13 @@ class CifarResNet(nn.Module):
         return out
 
 
-def cifar_resnet10(num_classes):
-    return CifarResNet(BasicBlock, [2, 2], num_classes)
+def cifar_resnet10(num_classes, dropout_prob=0.0):
+    return CifarResNet(BasicBlock, [2, 2], num_classes, dropout_prob=dropout_prob)
 
 
-def cifar_resnet20(num_classes):
-    return CifarResNet(BasicBlock, [3, 3, 3], num_classes)
+def cifar_resnet20(num_classes, dropout_prob=0.0):
+    return CifarResNet(BasicBlock, [3, 3, 3], num_classes, dropout_prob=dropout_prob)
 
 
-def cifar_resnet56(num_classes):
-    return CifarResNet(BasicBlock, [9, 9, 9], num_classes)
+def cifar_resnet56(num_classes, dropout_prob=0.0):
+    return CifarResNet(BasicBlock, [9, 9, 9], num_classes, dropout_prob=dropout_prob)

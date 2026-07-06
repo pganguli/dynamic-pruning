@@ -1,0 +1,27 @@
+# @package _global_
+# Stage 3D — fine-tune the backbone (gates frozen, deterministic) across the
+# full r_tgt range. Loads the Stage 2D checkpoint at the same sparsity_level.
+defaults:
+  - /finetune_schema
+  - /data: cifar10
+  - /model: resnet56
+  - _self_
+
+dynamic: true
+sparsity_level: 0.1
+epochs: 160
+log_interval: 100
+seed: 0
+
+decision:
+  action_num: 16
+  pruning_threshold: 0.5
+
+dynamic_range:
+  r_min: 0.1
+  r_max: 0.9
+
+optim:
+  lr: 0.001
+  weight_decay: 1e-4
+  label_smoothing: 0.1

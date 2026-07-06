@@ -1,0 +1,15 @@
+# @package _global_
+# Stage 1 variant — HAR (Human Activity Recognition).
+defaults:
+  - /pretrain_schema
+  - /data: har
+  - /model: har_cnn
+  - _self_
+
+epochs: 160
+log_interval: 100
+seed: 0
+
+optim:
+  weight_decay: 1e-4
+  label_smoothing: 0.1

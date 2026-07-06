@@ -1,0 +1,21 @@
+# @package _global_
+# Stage 1 — pretrain the backbone with no pruning.
+defaults:
+  - /pretrain_schema
+  - /data: cifar10
+  - /model: resnet56
+  - _self_
+
+epochs: 160
+log_interval: 100
+seed: 0
+
+optim:
+  weight_decay: 1e-4
+  label_smoothing: 0.1
+
+# Uncomment to enable Stage-1-only spatial dropout (safe: no gating yet,
+# Dropout2d has no learnable parameters so it can't affect checkpoint
+# compatibility with Stage 2/2D onward):
+# model:
+#   dropout_prob: 0.1
