@@ -20,14 +20,16 @@ the traced function, not before it — so the exporter captures it as a
 genuine second graph input instead of a frozen constant.
 
 Optionally (`export_fp16` / `export_int8`), also emits reduced-precision
-variants of the batched file:
+variants of BOTH files:
 
+  <dataset>_<arch>-dynamic-single-fp16.onnx
+  <dataset>_<arch>-dynamic-single-int8.onnx
   <dataset>_<arch>-dynamic-batched-fp16.onnx
   <dataset>_<arch>-dynamic-batched-int8.onnx
 
 fp16 is a lossless-enough straight cast (via onnxconverter_common) -- no
 accuracy-recovery step is needed. int8 is post-training static quantization
-(via onnxruntime.quantization, calibrated on real (image, r_tgt) batches from
+(via onnxruntime.quantization, calibrated on real (image, r_tgt) samples from
 the test set), which only quantizes Conv nodes -- the decision heads (Gemm/
 MatMul) and final classifier are left in fp32 so channel-selection logits
 keep their original precision. PTQ int8 *can* still lose accuracy on a
@@ -35,7 +37,10 @@ small/tight-capacity backbone (see the "Deviations from the paper" note on
 ResNet10 having little redundancy to prune), so whenever `export_int8` is
 enabled, `run()` evaluates fp32 vs int8 accuracy on the real test set via
 onnxruntime and prints the comparison -- a measured fact for your checkpoint,
-not a guess about whether you need quantization-aware fine-tuning.
+not a guess about whether you need quantization-aware fine-tuning. The single
+file's accuracy check runs batch-of-1 inference (matching its fixed batch=1
+graph shape) over a bounded sample count for speed; the batched file's check
+runs the full test set at its normal batch size.
 """
 
 import os
@@ -79,6 +84,7 @@ _DUMMY_SHAPES = {
 }
 _INPUT_NAMES = ("input.1", "r_tgt")
 _ACCURACY_R_VALUES = (0.1, 0.5, 0.9)  # spot-check points for the fp32-vs-int8 report
+_SINGLE_EVAL_MAX_SAMPLES = 500  # bound batch-of-1 accuracy eval (single.onnx) for speed
 
 
 class ExportWrapper(nn.Module):
@@ -136,35 +142,42 @@ def _export_fp16(input_path: str, output_path: str) -> None:
 
 
 class _CalibrationReader(CalibrationDataReader):
-    """Feeds real (image, r_tgt) batches from the test set to onnxruntime's
+    """Feeds real (image, r_tgt) samples from the test set to onnxruntime's
     static quantizer, so int8 activation ranges reflect actual deployment
-    inputs across the full r_tgt operating range -- not just one point."""
+    inputs across the full r_tgt operating range -- not just one point.
 
-    def __init__(self, testloader, r_values: tuple[float, ...], max_batches: int):
-        self._batches = self._make_batches(testloader, r_values, max_batches)
+    Always yields batch-of-1 samples so the same reader works whether the
+    target graph has a fixed batch=1 shape (single.onnx) or a dynamic batch
+    axis (batched.onnx, which also accepts batch=1 as one valid instance).
+    """
+
+    def __init__(self, testloader, r_values: tuple[float, ...], max_samples: int):
+        self._samples = self._make_samples(testloader, r_values, max_samples)
 
     @staticmethod
-    def _make_batches(testloader, r_values, max_batches):
-        batches = []
+    def _make_samples(testloader, r_values, max_samples):
+        samples = []
+        r_idx = 0
         for data, _target in testloader:
-            for r_val in r_values:
-                if len(batches) >= max_batches:
-                    return batches
-                r_t = np.full((data.shape[0], 1), r_val, dtype=np.float32)
-                batches.append(
+            for i in range(data.shape[0]):
+                if len(samples) >= max_samples:
+                    return samples
+                r_val = r_values[r_idx % len(r_values)]
+                r_idx += 1
+                samples.append(
                     {
-                        _INPUT_NAMES[0]: data.numpy().astype(np.float32),
-                        _INPUT_NAMES[1]: r_t,
+                        _INPUT_NAMES[0]: data[i : i + 1].numpy().astype(np.float32),
+                        _INPUT_NAMES[1]: np.full((1, 1), r_val, dtype=np.float32),
                     }
                 )
-            if len(batches) >= max_batches:
+            if len(samples) >= max_samples:
                 break
-        return batches
+        return samples
 
     def get_next(self):
-        if not self._batches:
+        if not self._samples:
             return None
-        return self._batches.pop(0)
+        return self._samples.pop(0)
 
 
 def _export_int8(input_path: str, output_path: str, testloader, cfg: ExportConfig) -> None:
@@ -192,11 +205,19 @@ def _export_int8(input_path: str, output_path: str, testloader, cfg: ExportConfi
 
 
 def _evaluate_onnx_accuracy(
-    onnx_path: str, testloader, r_values: tuple[float, ...]
+    onnx_path: str,
+    testloader,
+    r_values: tuple[float, ...],
+    batch_of_one: bool = False,
+    max_samples: int | None = None,
 ) -> dict[float, float]:
     """Top-1 accuracy of an exported ONNX model on the real test set, at a
     few r_tgt spot-check points. Used to give a measured (not guessed)
     answer to "did quantization hurt accuracy enough to need recovering?".
+
+    `batch_of_one=True` feeds one sample at a time (required for graphs
+    exported with a fixed batch=1 shape, i.e. the single.onnx variant),
+    optionally capped at `max_samples` for speed.
     """
     import onnxruntime as ort
 
@@ -205,17 +226,35 @@ def _evaluate_onnx_accuracy(
     for r_val in r_values:
         correct, total = 0, 0
         for data, target in testloader:
-            r_t = np.full((data.shape[0], 1), r_val, dtype=np.float32)
-            outputs = session.run(
-                None,
-                {
-                    _INPUT_NAMES[0]: data.numpy().astype(np.float32),
-                    _INPUT_NAMES[1]: r_t,
-                },
-            )
-            logits = np.asarray(outputs[0])
-            correct += (logits.argmax(axis=1) == target.numpy()).sum()
-            total += target.shape[0]
+            if batch_of_one:
+                for i in range(data.shape[0]):
+                    if max_samples is not None and total >= max_samples:
+                        break
+                    r_t = np.full((1, 1), r_val, dtype=np.float32)
+                    outputs = session.run(
+                        None,
+                        {
+                            _INPUT_NAMES[0]: data[i : i + 1].numpy().astype(np.float32),
+                            _INPUT_NAMES[1]: r_t,
+                        },
+                    )
+                    logits = np.asarray(outputs[0])
+                    correct += int(logits.argmax(axis=1)[0] == target[i].item())
+                    total += 1
+                if max_samples is not None and total >= max_samples:
+                    break
+            else:
+                r_t = np.full((data.shape[0], 1), r_val, dtype=np.float32)
+                outputs = session.run(
+                    None,
+                    {
+                        _INPUT_NAMES[0]: data.numpy().astype(np.float32),
+                        _INPUT_NAMES[1]: r_t,
+                    },
+                )
+                logits = np.asarray(outputs[0])
+                correct += (logits.argmax(axis=1) == target.numpy()).sum()
+                total += target.shape[0]
         results[r_val] = correct / total
     return results
 
@@ -270,45 +309,72 @@ def run(cfg: ExportConfig) -> tuple[str, str]:
     )
     _export_one(wrapped, dummy_input, dummy_r_tgt, batched_path, dynamic_batch=True)
 
-    if cfg.export_fp16:
-        fp16_path = f"{stem}-batched-fp16.onnx"
-        print(f"==> Exporting fp16 variant to {fp16_path} ...")
-        _export_fp16(batched_path, fp16_path)
-        print(f"Exported: {fp16_path}")
+    if cfg.export_fp16 or cfg.export_int8:
+        testloader = None
+        if cfg.export_int8:
+            _, testloader = prepare_data(
+                cfg.data.name, cfg.data.train_batch_size, cfg.data.test_batch_size
+            )
 
-    if cfg.export_int8:
-        _, testloader = prepare_data(
-            cfg.data.name, cfg.data.train_batch_size, cfg.data.test_batch_size
-        )
-        int8_path = f"{stem}-batched-int8.onnx"
-        print(f"==> Calibrating + exporting int8 variant to {int8_path} ...")
-        _export_int8(batched_path, int8_path, testloader, cfg)
-        print(f"Exported: {int8_path}")
+        # (path, label, is a fixed-batch=1 graph?)
+        variants = [(single_path, "single", True), (batched_path, "batched", False)]
+        for path, label, is_single in variants:
+            if cfg.export_fp16:
+                fp16_path = f"{stem}-{label}-fp16.onnx"
+                print(f"==> Exporting fp16 variant to {fp16_path} ...")
+                _export_fp16(path, fp16_path)
+                print(f"Exported: {fp16_path}")
 
-        print("==> Evaluating fp32 vs int8 accuracy on the test set ...")
-        fp32_acc = _evaluate_onnx_accuracy(batched_path, testloader, _ACCURACY_R_VALUES)
-        int8_acc = _evaluate_onnx_accuracy(int8_path, testloader, _ACCURACY_R_VALUES)
-        print(f"{'r_tgt':>8} | {'fp32 acc':>10} | {'int8 acc':>10} | {'drop':>8}")
-        max_drop = 0.0
-        for r_val in _ACCURACY_R_VALUES:
-            drop = fp32_acc[r_val] - int8_acc[r_val]
-            max_drop = max(max_drop, drop)
-            print(
-                f"{r_val:>8.2f} | {fp32_acc[r_val]:>10.4f} | {int8_acc[r_val]:>10.4f} | "
-                f"{drop:>+8.4f}"
-            )
-        if max_drop > 0.02:
-            print(
-                f"⚠  int8 PTQ costs up to {max_drop * 100:.2f} accuracy points at some "
-                "r_tgt. If that's too much for your use case, this needs "
-                "quantization-aware fine-tuning (retraining the backbone with "
-                "fake-quantization in the loop) rather than post-training "
-                "quantization alone -- ask and I'll add that stage."
-            )
-        else:
-            print(
-                f"✓  int8 PTQ costs at most {max_drop * 100:.2f} accuracy points -- "
-                "no fine-tuning needed for this checkpoint."
-            )
+            if cfg.export_int8:
+                assert testloader is not None
+                int8_path = f"{stem}-{label}-int8.onnx"
+                print(f"==> Calibrating + exporting int8 variant to {int8_path} ...")
+                _export_int8(path, int8_path, testloader, cfg)
+                print(f"Exported: {int8_path}")
+
+                eval_kwargs = (
+                    {"batch_of_one": True, "max_samples": _SINGLE_EVAL_MAX_SAMPLES}
+                    if is_single
+                    else {}
+                )
+                subset_note = (
+                    f" (first {_SINGLE_EVAL_MAX_SAMPLES} test samples)"
+                    if is_single
+                    else " (full test set)"
+                )
+                print(
+                    f"==> Evaluating fp32 vs int8 accuracy for {label}.onnx"
+                    f"{subset_note} ..."
+                )
+                fp32_acc = _evaluate_onnx_accuracy(
+                    path, testloader, _ACCURACY_R_VALUES, **eval_kwargs
+                )
+                int8_acc = _evaluate_onnx_accuracy(
+                    int8_path, testloader, _ACCURACY_R_VALUES, **eval_kwargs
+                )
+                print(f"{'r_tgt':>8} | {'fp32 acc':>10} | {'int8 acc':>10} | {'drop':>8}")
+                max_drop = 0.0
+                for r_val in _ACCURACY_R_VALUES:
+                    drop = fp32_acc[r_val] - int8_acc[r_val]
+                    max_drop = max(max_drop, drop)
+                    print(
+                        f"{r_val:>8.2f} | {fp32_acc[r_val]:>10.4f} | "
+                        f"{int8_acc[r_val]:>10.4f} | {drop:>+8.4f}"
+                    )
+                if max_drop > 0.02:
+                    print(
+                        f"⚠  int8 PTQ costs up to {max_drop * 100:.2f} accuracy points "
+                        f"at some r_tgt for {label}.onnx. If that's too much for your "
+                        "use case, this needs quantization-aware fine-tuning "
+                        "(retraining the backbone with fake-quantization in the loop) "
+                        "rather than post-training quantization alone -- ask and I'll "
+                        "add that stage."
+                    )
+                else:
+                    print(
+                        f"✓  int8 PTQ costs at most {max_drop * 100:.2f} accuracy "
+                        f"points for {label}.onnx -- no fine-tuning needed for this "
+                        "checkpoint."
+                    )
 
     return single_path, batched_path

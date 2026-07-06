@@ -353,18 +353,22 @@ to pick the operating point for a given power/latency budget.
 python scripts/export.py export_fp16=true export_int8=true
 ```
 
-Adds `cifar10_resnet56-dynamic-batched-fp16.onnx` (straight cast via
-`onnxconverter_common`, no retraining needed — fp16 has enough precision
-that this is standard practice) and `...-batched-int8.onnx` (post-training
-static quantization via `onnxruntime.quantization`, calibrated on real
-`(image, r_tgt)` batches from the test set). int8 only quantizes `Conv`
-nodes — the decision heads and final classifier (`Gemm`/`MatMul`) stay fp32,
-since quantization noise there risks flipping which channels/actions get
-selected, for negligible size savings (the heads are already a tiny fraction
-of total MACs — see Stage 4D below).
+Adds fp16/int8 variants of **both** exported files: `...-single-fp16.onnx`,
+`...-single-int8.onnx`, `...-batched-fp16.onnx`, `...-batched-int8.onnx`. fp16
+is a straight cast via `onnxconverter_common` — no retraining needed, fp16 has
+enough precision that this is standard practice. int8 is post-training static
+quantization via `onnxruntime.quantization`, calibrated on real `(image,
+r_tgt)` samples from the test set (batch-of-1, since `single.onnx` has a
+fixed batch=1 shape — the same calibration reader works for both files). int8
+only quantizes `Conv` nodes — the decision heads and final classifier
+(`Gemm`/`MatMul`) stay fp32, since quantization noise there risks flipping
+which channels/actions get selected, for negligible size savings (the heads
+are already a tiny fraction of total MACs — see Stage 4D below).
 
-Enabling `export_int8` prints a real fp32-vs-int8 accuracy comparison at a
-few `r_tgt` points, evaluated via onnxruntime on the actual test set — this
+Enabling `export_int8` prints a real fp32-vs-int8 accuracy comparison for
+*each* file at a few `r_tgt` points, evaluated via onnxruntime on the actual
+test set (`single.onnx`'s check runs batch-of-1 over a bounded sample count
+for speed; `batched.onnx`'s runs the full test set) — this
 is a measured fact for your checkpoint, not a guess about whether
 quantization-aware fine-tuning is needed. A tight-capacity backbone (e.g.
 ResNet10, which has little redundancy to prune — see the deviations table)
