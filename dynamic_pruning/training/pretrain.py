@@ -13,7 +13,7 @@ from .. import checkpoints
 from ..config import PretrainConfig
 from ..data import prepare_data
 from ..logging_utils import RunLogger
-from .common import default_learning_rate, initialize_model, num_classes
+from .common import default_pretrain_learning_rate, initialize_model, num_classes
 
 __all__ = ["run"]
 
@@ -43,7 +43,7 @@ def run(cfg: PretrainConfig) -> float:
     lr = (
         cfg.optim.lr
         if cfg.optim.lr is not None
-        else default_learning_rate(cfg.model.arch)
+        else default_pretrain_learning_rate(cfg.model.arch)
     )
     optimizer = torch.optim.SGD(
         model.parameters(),

@@ -10,6 +10,12 @@ epochs: 160
 log_interval: 100
 seed: 0
 
+data:
+  # Paper's Stage 1 recipe (lr=0.1 default, see common.py) is tuned for
+  # batch_size=128 from scratch; the shared cifar10.yaml default of 512
+  # is right for Stage 2/2D but starves Stage 1 convergence if inherited here.
+  train_batch_size: 128
+
 optim:
   weight_decay: 1e-4
   label_smoothing: 0.1
