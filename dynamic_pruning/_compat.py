@@ -18,7 +18,7 @@ _original = getattr(argparse.ArgumentParser, "_check_help")
 def _safe_check_help(self, action):
     try:
         return _original(self, action)
-    except TypeError:
+    except TypeError or ValueError:
         # ignore Hydra LazyCompletionHelp incompatibility
         return
 
