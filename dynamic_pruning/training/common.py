@@ -33,7 +33,10 @@ _LR_DEFAULTS = {"kws": 0.01, "har_cnn": 0.01}  # resnet* handled separately belo
 # joint decision-head recipe below — the original train_baseline.py used 0.1
 # for ResNet/CIFAR (batch_size=128); reusing Stage 2's 0.01 here silently
 # starves Stage 1 of signal and the backbone plateaus well short of converged.
-_PRETRAIN_LR_DEFAULTS = {"kws": 0.01, "har_cnn": 0.01}  # resnet* handled separately below
+_PRETRAIN_LR_DEFAULTS = {
+    "kws": 0.01,
+    "har_cnn": 0.01,
+}  # resnet* handled separately below
 
 
 def num_classes(dataset: str) -> int:

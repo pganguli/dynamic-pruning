@@ -8,6 +8,7 @@ import os
 
 import torch
 import torch.nn.functional as F
+from omegaconf import DictConfig
 
 from .. import checkpoints
 from ..config import PretrainConfig
@@ -27,6 +28,8 @@ def run(cfg: PretrainConfig) -> float:
     log = RunLogger(
         logdir, tensorboard=cfg.tensorboard.enabled, tb_log_dir=cfg.tensorboard.log_dir
     )
+    assert isinstance(cfg, DictConfig), "PretrainConfig must be converted to DictConfig"
+    log.log_config(cfg)
 
     trainloader, testloader = prepare_data(
         cfg.data.name, cfg.data.train_batch_size, cfg.data.test_batch_size

@@ -233,3 +233,6 @@ optuna.db
 calibration.csv
 #   Stage 5 ONNX export artifacts (dynamic_pruning/export.py).
 *.onnx
+#   Hydra's per-run working directory (config snapshot, overrides, hydra.log);
+#   created automatically by every @hydra.main-decorated script invocation.
+outputs/
