@@ -403,7 +403,13 @@ plot the accuracy-vs-MACs-reduction curve:
 python scripts/calibrate.py
 ```
 
-The CSV columns are `r_tgt, keep_frac, macs_redux, head_overhead, accuracy, tracking_err`.
+The CSV columns are `r_tgt, keep_frac, keep_frac_std, macs_redux, macs_redux_std,
+head_overhead, accuracy, tracking_err`. `keep_frac`/`macs_redux` are test-set means;
+the paired `_std` columns are the standard deviation *across individual test
+images* at that r_tgt (not across batches) -- a low mean tracking error can
+still hide wide image-to-image swings in realized density, and the std tells
+you how much to trust a single-image MACs estimate at deployment time.
+
 Plot `macs_redux` (x-axis) vs `accuracy` (y-axis) for the Pareto curve.
 A well-trained dynamic model should trace a smooth, monotone curve. Compare
 against a set of separately-trained static models (one per operating point)

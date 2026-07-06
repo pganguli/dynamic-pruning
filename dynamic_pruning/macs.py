@@ -22,6 +22,7 @@ own compute, which is real overhead paid in full regardless of r_tgt:
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -128,8 +129,17 @@ def measure_block_densities(
     return {name: sums[name] / counts[name] for name in sums}
 
 
-def macs_report(dense_macs: dict[str, int], densities: dict[str, float]) -> dict[str, float]:
+def macs_report(
+    dense_macs: dict[str, int], densities: dict[str, float | np.ndarray]
+) -> dict[str, float | np.ndarray]:
     """Combine dense per-module MACs with realized per-block densities.
+
+    `densities` values may be scalars (one density per block, e.g. from
+    `measure_block_densities`) or per-sample arrays (one density per test
+    image per block) -- the arithmetic below broadcasts either way, so
+    passing arrays yields per-sample `reduction_frac`/`effective_total`
+    arrays instead of scalars (useful for reporting std, not just mean,
+    across the test set).
 
     Returns:
       dense_total       -- MACs of an equivalent model with no decision heads

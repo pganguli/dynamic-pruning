@@ -12,6 +12,12 @@ structurally realized (as the on-device deployment is expected to do), and
 `overhead` is the decision heads' own compute as a fraction of that baseline
 -- since they always run in full regardless of r_tgt, high overhead can
 erode or exceed the savings.
+
+keep-frac and MACs-redux are reported as mean +/- std *over the test set*
+(one value per input image, not per batch) -- the mean alone can hide a
+model that tracks r_tgt well on average but swings wildly image to image;
+the std tells you how much to trust a single-image MACs estimate at
+deployment time.
 """
 
 import csv
@@ -41,7 +47,7 @@ from .training.common import (
 __all__ = ["run"]
 
 
-def run(cfg: CalibrateConfig) -> list[tuple[float, float, float, float, float, float]]:
+def run(cfg: CalibrateConfig) -> list[tuple[float, float, float, float, float, float, float, float]]:
     action_num = cfg.decision.action_num or default_action_num(cfg.model.arch)
     logdir = checkpoints.decision_dir(
         action_num, cfg.data.name, cfg.model.arch, cfg.sparsity_level
@@ -97,21 +103,29 @@ def run(cfg: CalibrateConfig) -> list[tuple[float, float, float, float, float, f
     log.info(
         f"\nCalibration sweep: {cfg.grid_n} points in [{cfg.dynamic_range.r_min:.2f}, {cfg.dynamic_range.r_max:.2f}]"
     )
-    log.info("-" * 90)
-    log.info("  r_tgt  | keep-frac | MACs-redux | head-overhead | accuracy | tracking-err")
-    log.info("-" * 90)
+    log.info("-" * 110)
+    log.info(
+        "  r_tgt  |   keep-frac (mean+-std)  |  MACs-redux (mean+-std)  | head-overhead | accuracy | tracking-err"
+    )
+    log.info("-" * 110)
 
-    # Per-DecisionHead realized density, accumulated alongside the existing
-    # accuracy/keep-frac loop below (no extra dataset pass needed).
-    density_sums: dict[str, float] = {}
-    density_counts: dict[str, int] = {}
+    # Per-DecisionHead realized density, accumulated *per sample* (not just a
+    # running mean) alongside the existing accuracy/keep-frac loop below (no
+    # extra dataset pass needed) -- needed to report input-to-input std, not
+    # just a test-set-wide average.
+    density_chunks: dict[str, list[np.ndarray]] = {}
 
     def make_density_hook(name: str):
         def hook(_module, _inp, output):
             _sampled_actions, selected_channels = output
-            d = (selected_channels > cfg.decision.pruning_threshold).float().mean().item()
-            density_sums[name] = density_sums.get(name, 0.0) + d
-            density_counts[name] = density_counts.get(name, 0) + 1
+            d = (
+                (selected_channels > cfg.decision.pruning_threshold)
+                .float()
+                .mean(dim=1)  # per-sample density, not collapsed over the batch
+                .cpu()
+                .numpy()
+            )
+            density_chunks.setdefault(name, []).append(d)
 
         return hook
 
@@ -122,8 +136,7 @@ def run(cfg: CalibrateConfig) -> list[tuple[float, float, float, float, float, f
     rows = []
     for r_val in r_tgt_grid:
         correct, densities = 0, []
-        density_sums.clear()
-        density_counts.clear()
+        density_chunks.clear()
         with torch.no_grad():
             for data, target in testloader:
                 default_graph.clear_all_tensors()
@@ -135,28 +148,47 @@ def run(cfg: CalibrateConfig) -> list[tuple[float, float, float, float, float, f
                     default_graph.get_tensor_list("selected_channels"), dim=1
                 )
                 densities.append(
-                    (cc > cfg.decision.pruning_threshold).float().mean().item()
+                    (cc > cfg.decision.pruning_threshold)
+                    .float()
+                    .mean(dim=1)  # per-sample, not collapsed over the batch
+                    .cpu()
+                    .numpy()
                 )
                 correct += (output.max(1)[1] == target).float().sum().item()
 
         acc = correct / n_test
-        keep_frac = float(np.mean(densities))
+        per_sample_keep_frac = np.concatenate(densities)
+        keep_frac = float(per_sample_keep_frac.mean())
+        keep_frac_std = float(per_sample_keep_frac.std())
         tracking_err = abs(keep_frac - r_val)
 
         block_densities = {
-            name: density_sums[name] / density_counts[name] for name in density_sums
+            name: np.concatenate(chunks) for name, chunks in density_chunks.items()
         }
         report = macs_report(dense_macs, block_densities)
-        macs_redux = report["reduction_frac"]
-        head_overhead = report["overhead_frac"]
+        macs_redux = float(np.mean(report["reduction_frac"]))
+        macs_redux_std = float(np.std(report["reduction_frac"]))
+        head_overhead = float(np.mean(report["overhead_frac"]))
 
-        rows.append((r_val, keep_frac, macs_redux, head_overhead, acc, tracking_err))
+        rows.append(
+            (
+                r_val,
+                keep_frac,
+                keep_frac_std,
+                macs_redux,
+                macs_redux_std,
+                head_overhead,
+                acc,
+                tracking_err,
+            )
+        )
         log.info(
-            f"  {r_val:.4f}  |  {keep_frac:.4f}   |   {macs_redux:.4f}   |    {head_overhead:.4f}     "
+            f"  {r_val:.4f}  |  {keep_frac:.4f} +- {keep_frac_std:.4f}    "
+            f"|  {macs_redux:.4f} +- {macs_redux_std:.4f}    |    {head_overhead:.4f}     "
             f"| {acc:.4f}   |   {tracking_err:.4f}"
         )
 
-    log.info("-" * 90)
+    log.info("-" * 110)
 
     keep_fracs = [r[1] for r in rows]
     non_monotone = [
@@ -171,27 +203,40 @@ def run(cfg: CalibrateConfig) -> list[tuple[float, float, float, float, float, f
     else:
         log.info("\n✓  Realized density is monotonically non-decreasing with r_tgt.")
 
-    mean_tracking_err = float(np.mean([r[5] for r in rows]))
+    mean_tracking_err = float(np.mean([r[7] for r in rows]))
     log.info(f"Mean tracking error across grid: {mean_tracking_err:.4f}")
 
-    head_overhead_frac = rows[0][3] if rows else 0.0
+    head_overhead_frac = rows[0][5] if rows else 0.0
     log.info(
         f"Decision-head overhead: {head_overhead_frac * 100:.2f}% of no-pruning baseline MACs "
         "(paid in full regardless of r_tgt)"
     )
-    worst = min(rows, key=lambda r: r[2]) if rows else None
-    if worst is not None and worst[2] < 0:
+    worst = min(rows, key=lambda r: r[3]) if rows else None
+    if worst is not None and worst[3] < 0:
         log.info(
             f"⚠  At r_tgt={worst[0]:.2f}, decision-head overhead exceeds backbone savings "
-            f"(net MACs INCREASE of {-worst[2] * 100:.2f}%)."
+            f"(net MACs INCREASE of {-worst[3] * 100:.2f}%)."
         )
 
     log.info("\n### Calibration table (r_tgt -> operating point)\n")
-    log.info("| r_tgt | keep-frac | MACs-redux | head-overhead | accuracy | tracking-err |")
+    log.info(
+        "| r_tgt | keep-frac (mean+-std) | MACs-redux (mean+-std) | head-overhead | "
+        "accuracy | tracking-err |"
+    )
     log.info("|---|---|---|---|---|---|")
-    for r_val, keep_frac, macs_redux, head_overhead, acc, tracking_err in rows:
+    for (
+        r_val,
+        keep_frac,
+        keep_frac_std,
+        macs_redux,
+        macs_redux_std,
+        head_overhead,
+        acc,
+        tracking_err,
+    ) in rows:
         log.info(
-            f"| {r_val:.2f} | {keep_frac:.4f} | {macs_redux * 100:.2f}% | "
+            f"| {r_val:.2f} | {keep_frac:.4f} +/- {keep_frac_std:.4f} | "
+            f"{macs_redux * 100:.2f}% +/- {macs_redux_std * 100:.2f}% | "
             f"{head_overhead * 100:.2f}% | {acc:.4f} | {tracking_err:.4f} |"
         )
 
@@ -202,7 +247,9 @@ def run(cfg: CalibrateConfig) -> list[tuple[float, float, float, float, float, f
                 [
                     "r_tgt",
                     "keep_frac",
+                    "keep_frac_std",
                     "macs_redux",
+                    "macs_redux_std",
                     "head_overhead",
                     "accuracy",
                     "tracking_err",
