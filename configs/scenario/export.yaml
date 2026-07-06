@@ -9,6 +9,16 @@ defaults:
 sparsity_level: 0.1
 finetuned: true
 
+# Opt-in reduced-precision exports alongside the default fp32 files:
+#   export_fp16=true  -- straight cast, no accuracy-recovery needed
+#   export_int8=true  -- post-training static quantization (Conv only);
+#                        prints a fp32-vs-int8 accuracy comparison on the
+#                        real test set so you can judge whether it needs
+#                        quantization-aware fine-tuning for your checkpoint
+export_fp16: false
+export_int8: false
+int8_calibration_batches: 20
+
 decision:
   action_num: 16
   pruning_threshold: 0.5

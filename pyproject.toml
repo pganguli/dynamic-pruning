@@ -8,6 +8,7 @@
         "onnxoptimizer==0.4.2",
         "onnxruntime==1.27.0",
         "onnxsim==0.6.5",
+        "onnxconverter-common==1.16.0",
         "torch==2.12.1",
         "torchvision==0.27.1",
         "pandas==3.0.3",        # needed for deep-learning-HAR utilities

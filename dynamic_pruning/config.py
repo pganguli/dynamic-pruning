@@ -157,8 +157,20 @@ class ExportConfig:
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     decision: DecisionConfig = field(default_factory=DecisionConfig)
+    dynamic_range: DynamicRangeConfig = field(default_factory=DynamicRangeConfig)
     sparsity_level: float = 0.1
     finetuned: bool = True
+    # Additional precisions to export alongside the default fp32 files.
+    # Both are opt-in: fp16 is a straight cast (no accuracy-recovery step
+    # needed); int8 is post-training static quantization, which *can* lose
+    # accuracy on a small/tight-capacity backbone -- run.py prints an
+    # onnxruntime accuracy comparison against fp32 whenever export_int8 is
+    # enabled so that's a measured fact for your checkpoint, not a guess.
+    export_fp16: bool = False
+    export_int8: bool = False
+    # Number of (image, r_tgt) calibration batches to feed onnxruntime's
+    # static quantizer when export_int8 is enabled.
+    int8_calibration_batches: int = 20
 
 
 @dataclass
