@@ -393,11 +393,11 @@ was chosen, for when you need to override it.
 | `decision.lambda_balance` | — | Load-balancing loss weight (dynamic only, Switch-Transformer-style). Penalises routing collapse onto a handful of actions | 0.5 |
 | `decision.gamma_under` | — | Fraction of γ applied when sparsity is below target (static mode only) | 0.7 |
 | `decision.action_num` | *m* | Channel-selection masks per decision unit | 16 (dynamic) / 40 (static, paper CIFAR default) |
-| `epochs` | — | Training epochs | 100 (Stage 2D @ batch 2048) / 400 (Stage 2S @ batch 512), 160 (Stages 1, 3) |
+| `epochs` | — | Training epochs | 100 (Stage 2D) / 400 (Stage 2S), 160 (Stages 1, 3) |
 | `optim.momentum` | — | SGD momentum for backbone optimizer (Nesterov enabled) | 0.9 |
 | `optim.weight_decay` | — | Weight decay for backbone optimizer | 1e-4 (Stage 1) / 1e-9 (Stage 2) |
 | `optim.label_smoothing` | — | Label smoothing on the training cross-entropy loss | 0.1 (only reshapes CE's target distribution; doesn't touch the reg/div/balance loss terms or checkpoint shapes) |
-| `data.train_batch_size` | — | Batch size | 2048 (Stage 2D dynamic) / 512 (others) |
+| `data.train_batch_size` | — | Batch size | 512 (Stage 2/2D/3/3D) / 128 (Stage 1) |
 | `decision.pruning_threshold` | — | Hard gate threshold at evaluation time | 0.5 |
 | `dynamic` | — | Enable dynamic-target mode | true (default scenario) |
 | `dynamic_range.r_min` / `r_max` | — | r_tgt training range | 0.1 / 0.9 |

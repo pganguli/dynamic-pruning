@@ -18,7 +18,6 @@ train:
   sparsity_level: 0.1
   data:
     name: cifar10
-    train_batch_size: 2048
   model:
     arch: resnet56
   decision:
