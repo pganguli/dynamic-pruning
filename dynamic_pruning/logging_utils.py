@@ -1,7 +1,7 @@
 """Run logging: console + file text log, plus optional TensorBoard scalars.
 
 RunLogger wraps both so every training script writes to the same three
-places (stdout, logs/<run>/log, and a TensorBoard event file) through a
+places (stdout, tb_logs/<run>/log, and a TensorBoard event file) through a
 single small API, instead of each stage re-deriving its own print/log setup.
 """
 

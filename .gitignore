@@ -221,8 +221,8 @@ __marimo__/
 
 # Project artifacts (dynamic-pruning)
 #   Training outputs: checkpoints, text logs, and TensorBoard event files
-#   under logs/<stage>/.../tb (see dynamic_pruning/checkpoints.py + logging_utils.py).
-logs/
+#   under tb_logs/<stage>/.../tb (see dynamic_pruning/checkpoints.py + logging_utils.py).
+tb_logs/
 #   Downloaded/cached datasets (torchvision CIFAR-10/100 root; see data.py).
 data/
 #   Cloned upstream repos required for HAR/KWS preprocessing (see data.py).

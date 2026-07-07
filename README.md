@@ -55,7 +55,7 @@ re-export.
 ```text
 dynamic_pruning/          importable package
   config.py                 Hydra/dataclass config schema for every stage
-  checkpoints.py             logs/... path conventions
+  checkpoints.py             tb_logs/... path conventions
   data.py                    dataset loading (CIFAR-10/100, HAR, KWS)
   decision.py                TorchGraph registry + DecisionHead gating logic
   logging_utils.py           console/file/TensorBoard run logging
@@ -77,8 +77,8 @@ configs/                   Hydra YAML configs
 scripts/                   thin @hydra.main CLI entrypoints, one per stage
 ```
 
-Every training run writes text logs to `logs/.../log` and TensorBoard scalars
-to `logs/.../tb/` (view with `tensorboard --logdir logs`).
+Every training run writes text logs to `tb_logs/.../log` and TensorBoard scalars
+to `tb_logs/.../tb/` (view with `tensorboard --logdir tb_logs`).
 
 Most scalars are logged one-tag-per-chart via `RunLogger.scalars()`. A few
 related scalars that are more useful compared on one set of axes — e.g. Stage
@@ -187,7 +187,7 @@ python scripts/pretrain.py --config-name scenario/pretrain_har
 python scripts/pretrain.py --config-name scenario/pretrain_kws
 ```
 
-Checkpoint → `logs/pretrained/<dataset>/<arch>/checkpoint.pth`
+Checkpoint → `tb_logs/pretrained/<dataset>/<arch>/checkpoint.pth`
 
 `optim.label_smoothing=0.1` is on by default (safe, doesn't touch checkpoint
 shapes). `model.dropout_prob` defaults to `0.0`; set it (e.g. `0.1`–`0.3`) for a
@@ -215,7 +215,7 @@ keep-fraction on the test set should converge toward `sparsity_level`.
 python scripts/train.py --config-name scenario/train_static
 ```
 
-Checkpoint → `logs/decision-40/cifar10-resnet56/sparsity-0.40/checkpoint.pth.tar`
+Checkpoint → `tb_logs/decision-40/cifar10-resnet56/sparsity-0.40/checkpoint.pth.tar`
 
 **What to watch:** the per-epoch test line. `Sparsity` is the fraction of
 channels kept active — aim for it to settle near `sparsity_level`:
@@ -236,7 +236,7 @@ accuracy. Typically gains 0.5–2% top-1.
 python scripts/finetune.py --config-name scenario/finetune_static
 ```
 
-Fine-tuned checkpoint → `logs/finetune-decision-40/cifar10-resnet56/sparsity-0.40/checkpoint.pth`
+Fine-tuned checkpoint → `tb_logs/finetune-decision-40/cifar10-resnet56/sparsity-0.40/checkpoint.pth`
 
 #### Stage 4S — Export to ONNX
 
@@ -266,7 +266,7 @@ forcing the mask menu to differentiate into masks of varying densities.
 python scripts/train.py
 ```
 
-Checkpoint → `logs/decision-16/cifar10-resnet56/sparsity-0.10/checkpoint.pth.tar`
+Checkpoint → `tb_logs/decision-16/cifar10-resnet56/sparsity-0.10/checkpoint.pth.tar`
 *(the path uses `sparsity_level` as an identifier key, not a training target,
 in dynamic mode)*
 
@@ -302,7 +302,7 @@ is recovered across the full operating range (not just one point).
 python scripts/finetune.py
 ```
 
-Fine-tuned checkpoint → `logs/finetune-decision-16/cifar10-resnet56/sparsity-0.10/checkpoint.pth`
+Fine-tuned checkpoint → `tb_logs/finetune-decision-16/cifar10-resnet56/sparsity-0.10/checkpoint.pth`
 
 #### Stage 4D — Calibrate
 
@@ -389,7 +389,7 @@ is more likely to need it than ResNet56.
 ### During training
 
 Test-set metrics are printed at the end of every epoch and logged to
-TensorBoard (`logs/.../tb/`). The best checkpoint is saved whenever a new best
+TensorBoard (`tb_logs/.../tb/`). The best checkpoint is saved whenever a new best
 accuracy is reached while the realized keep-fraction (static) or mean tracking
 error (dynamic) is within tolerance.
 

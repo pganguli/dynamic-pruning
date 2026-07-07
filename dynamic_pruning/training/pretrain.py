@@ -1,6 +1,6 @@
 """Stage 1 — pretrain the backbone with no pruning.
 
-Saves a checkpoint to logs/pretrained/<dataset>/<arch>/checkpoint.pth, the
+Saves a checkpoint to tb_logs/pretrained/<dataset>/<arch>/checkpoint.pth, the
 starting point for Stage 2/2D (dynamic_pruning/training/train.py).
 """
 

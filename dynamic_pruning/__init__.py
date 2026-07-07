@@ -7,7 +7,7 @@ instead of needing one model per operating point.
 
 Submodules:
   config          Hydra/dataclass config schema for every pipeline stage
-  checkpoints     logs/... path conventions shared by every stage
+  checkpoints     tb_logs/... path conventions shared by every stage
   data            dataset loading (CIFAR-10/100, HAR, KWS)
   decision        TorchGraph registry + DecisionHead gating logic
   logging_utils   console/file/TensorBoard run logging

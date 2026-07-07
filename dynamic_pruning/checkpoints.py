@@ -1,7 +1,7 @@
 """Checkpoint path conventions shared by every training/eval stage.
 
 Centralizing these avoids each script re-deriving (and risking drifting)
-the same "logs/<stage>-<action_num>/<dataset>-<arch>/sparsity-<r>/..." layout.
+the same "tb_logs/<stage>-<action_num>/<dataset>-<arch>/sparsity-<r>/..." layout.
 """
 
 import os
@@ -16,7 +16,7 @@ __all__ = [
     "finetune_checkpoint",
 ]
 
-LOGS_ROOT = "logs"
+LOGS_ROOT = "tb_logs"
 
 
 def pretrain_dir(dataset: str, arch: str) -> str:
