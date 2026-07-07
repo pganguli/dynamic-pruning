@@ -288,8 +288,16 @@ def run(
                 },
                 epoch,
             )
-            for r_val, (realized, acc) in point_results.items():
-                log.scalar(f"test/keep_frac_r{r_val:.2f}", realized, epoch)
+            log.scalar_group(
+                "test/keep_frac_by_r_tgt",
+                {f"r={r_val:.2f}": realized for r_val, (realized, _acc) in point_results.items()},
+                epoch,
+            )
+            log.scalar_group(
+                "test/accuracy_by_r_tgt",
+                {f"r={r_val:.2f}": acc for r_val, (_realized, acc) in point_results.items()},
+                epoch,
+            )
             return mean_acc, mean_tracking_err
 
         test_loss_ce, test_sparsity, correct = [], [], 0

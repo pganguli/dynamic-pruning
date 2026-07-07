@@ -64,6 +64,19 @@ class RunLogger:
         for tag, value in tag_value.items():
             self.scalar(tag, value, step)
 
+    def scalar_group(self, main_tag: str, tag_value: dict, step: int) -> None:
+        """Log several related scalars as ONE overlaid multi-line chart.
+
+        Unlike `scalar`/`scalars` (each tag gets its own separate chart),
+        this uses `SummaryWriter.add_scalars`, which draws every value in
+        `tag_value` as a distinct colored line on a single set of axes under
+        `main_tag` -- e.g. one chart with 5 lines for keep-frac at each
+        r_tgt grid point, instead of 5 separate charts you'd have to eyeball
+        side by side.
+        """
+        if self.writer is not None:
+            self.writer.add_scalars(main_tag, tag_value, step)
+
     def close(self) -> None:
         if self.writer is not None:
             self.writer.flush()

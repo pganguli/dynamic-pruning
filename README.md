@@ -80,6 +80,14 @@ scripts/                   thin @hydra.main CLI entrypoints, one per stage
 Every training run writes text logs to `logs/.../log` and TensorBoard scalars
 to `logs/.../tb/` (view with `tensorboard --logdir logs`).
 
+Most scalars are logged one-tag-per-chart via `RunLogger.scalars()`. A few
+related scalars that are more useful compared on one set of axes — e.g. Stage
+2D's realized keep-fraction at each `r_tgt` grid point — are logged via
+`RunLogger.scalar_group()` instead (`test/keep_frac_by_r_tgt`,
+`test/accuracy_by_r_tgt`), which uses `SummaryWriter.add_scalars` under the
+hood to draw them as multiple colored lines on a single overlaid chart rather
+than separate side-by-side ones.
+
 ## Prerequisites
 
 - CUDA-capable GPU (required for all training scripts)
