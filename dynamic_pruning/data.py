@@ -2,10 +2,10 @@
 
 import os
 import pathlib
-import sys
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from torchvision import datasets, transforms
@@ -126,51 +126,63 @@ def _load_google_speech(train: bool) -> TensorDataset:
     )
 
 
+def _read_har_data(data_path: str, split: str) -> tuple[np.ndarray, np.ndarray]:
+    # Adapted from https://github.com/Burakhimmetoglu/deep-learning-HAR
+    # (utils/utilities.py:read_data), trimmed to what _load_har needs.
+    n_steps = 128
+
+    split_path = os.path.join(data_path, split)
+    signals_path = os.path.join(split_path, "Inertial_Signals")
+
+    labels = pd.read_csv(os.path.join(split_path, f"y_{split}.txt"), header=None)[
+        0
+    ].to_numpy()
+
+    channel_files = sorted(os.listdir(signals_path))
+    x = np.zeros((len(labels), n_steps, len(channel_files)))
+    for i_ch, fil_ch in enumerate(channel_files):
+        chan = pd.read_csv(os.path.join(signals_path, fil_ch), sep=r"\s+", header=None)
+        x[:, :, i_ch] = chan.to_numpy()
+
+    return x, labels
+
+
+def _standardize_har_data(train: np.ndarray, data: np.ndarray) -> np.ndarray:
+    # Adapted from deep-learning-HAR/utils/utilities.py:standardize.
+    return (data - np.mean(train, axis=0)[None, :, :]) / np.std(train, axis=0)[
+        None, :, :
+    ]
+
+
 def _load_har(
     train_batch_size: int, test_batch_size: int
 ) -> tuple[DataLoader, DataLoader]:
     # Inspired by https://blog.csdn.net/bucan804228552/article/details/120143943
-    har_utils_dir = THIS_DIR / "dnn-models" / "deep-learning-HAR" / "utils"
-    orig_sys_path = sys.path.copy()
-    try:
-        sys.path.append(str(har_utils_dir))
-        try:
-            from utilities import read_data, standardize
-        except ModuleNotFoundError:
-            raise RuntimeError(
-                f"HAR utilities not found at {har_utils_dir}.\n"
-                "Copy the deep-learning-HAR/utils directory from the upstream project into\n"
-                "  dnn-models/deep-learning-HAR/utils/\n"
-                "so that dnn-models/deep-learning-HAR/utils/utilities.py exists."
-            ) from None
-
-        archive_dir = os.path.expanduser("~/.cache/UCI HAR Dataset")
-        if not os.path.isdir(archive_dir):
-            raise RuntimeError(
-                f"UCI HAR Dataset not found at {archive_dir}.\n"
-                "Download it from:\n"
-                "  https://archive.ics.uci.edu/dataset/240/human+activity+recognition+using+smartphones\n"
-                "Extract the zip so that ~/.cache/UCI HAR Dataset/ contains train/ and test/."
-            )
-
-        X_train_raw, train_labels, _ = read_data(archive_dir, split="train")
-        _, X_train = standardize(X_train_raw, X_train_raw)
-        trainset = TensorDataset(
-            torch.from_numpy(X_train.astype(np.float32)),
-            torch.from_numpy(train_labels - 1),
+    archive_dir = os.path.expanduser("~/.cache/UCI HAR Dataset")
+    if not os.path.isdir(archive_dir):
+        raise RuntimeError(
+            f"UCI HAR Dataset not found at {archive_dir}.\n"
+            "Download it from:\n"
+            "  https://archive.ics.uci.edu/dataset/240/human+activity+recognition+using+smartphones\n"
+            "Extract the zip so that ~/.cache/UCI HAR Dataset/ contains train/ and test/."
         )
-        trainloader = DataLoader(trainset, batch_size=train_batch_size, shuffle=True)
 
-        X_test, test_labels, _ = read_data(archive_dir, split="test")
-        _, X_test = standardize(X_train_raw, X_test)
-        testset = TensorDataset(
-            torch.from_numpy(X_test.astype(np.float32)),
-            torch.from_numpy(test_labels - 1),
-        )
-        testloader = DataLoader(testset, batch_size=test_batch_size, shuffle=False)
-        return trainloader, testloader
-    finally:
-        sys.path[:] = orig_sys_path
+    X_train_raw, train_labels = _read_har_data(archive_dir, split="train")
+    X_train = _standardize_har_data(X_train_raw, X_train_raw)
+    trainset = TensorDataset(
+        torch.from_numpy(X_train.astype(np.float32)),
+        torch.from_numpy(train_labels - 1),
+    )
+    trainloader = DataLoader(trainset, batch_size=train_batch_size, shuffle=True)
+
+    X_test_raw, test_labels = _read_har_data(archive_dir, split="test")
+    X_test = _standardize_har_data(X_train_raw, X_test_raw)
+    testset = TensorDataset(
+        torch.from_numpy(X_test.astype(np.float32)),
+        torch.from_numpy(test_labels - 1),
+    )
+    testloader = DataLoader(testset, batch_size=test_batch_size, shuffle=False)
+    return trainloader, testloader
 
 
 def _cifar_transforms() -> tuple[transforms.Compose, transforms.Compose]:
