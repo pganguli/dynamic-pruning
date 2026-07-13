@@ -34,7 +34,7 @@ def run(cfg: PretrainConfig) -> float:
     trainloader, testloader = prepare_data(
         cfg.data.name, cfg.data.train_batch_size, cfg.data.test_batch_size
     )
-    n_test = len(testloader.dataset)  # type: ignore[arg-type]
+    n_test = len(testloader.dataset)  # ty: ignore[invalid-argument-type]
 
     model = initialize_model(
         cfg.data.name,

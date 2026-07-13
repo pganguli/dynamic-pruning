@@ -97,7 +97,7 @@ def run(
     trainloader, testloader = prepare_data(
         cfg.data.name, cfg.data.train_batch_size, cfg.data.test_batch_size
     )
-    n_test = len(testloader.dataset)  # type: ignore[arg-type]
+    n_test = len(testloader.dataset)  # ty: ignore[invalid-argument-type]
 
     model = initialize_model(cfg.data.name, cfg.model.arch, num_classes(cfg.data.name))
     model_params = list(
@@ -236,7 +236,7 @@ def run(
                     )
                 log.scalars(scalars, step)
 
-    def test(epoch: int):
+    def test(epoch: int) -> tuple[float, float]:
         model.eval()
         apply_func(model, "DecisionHead", set_deterministic_value, deterministic=True)
         apply_func(
@@ -290,12 +290,18 @@ def run(
             )
             log.scalar_group(
                 "test/keep_frac_by_r_tgt",
-                {f"r={r_val:.2f}": realized for r_val, (realized, _acc) in point_results.items()},
+                {
+                    f"r={r_val:.2f}": realized
+                    for r_val, (realized, _acc) in point_results.items()
+                },
                 epoch,
             )
             log.scalar_group(
                 "test/accuracy_by_r_tgt",
-                {f"r={r_val:.2f}": acc for r_val, (_realized, acc) in point_results.items()},
+                {
+                    f"r={r_val:.2f}": acc
+                    for r_val, (_realized, acc) in point_results.items()
+                },
                 epoch,
             )
             return mean_acc, mean_tracking_err
@@ -388,7 +394,7 @@ def run(
 
 def _dynamic_losses(
     cfg: TrainConfig, r_tgt: torch.Tensor, action_num: int, device: str
-):
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Expected-density regularizer + gate diversity anchor + load-balancing
     loss (dynamic mode only). See module docstring / README for rationale."""
     action_routing = default_graph.get_tensor_list("action_routing")

@@ -8,13 +8,17 @@ ResNet: parametric ResNet builder (ResNet-10, ResNet-18, etc.) where the
 
 import math
 
+import torch
 import torch.nn as nn
 
 
 class BasicBlock(nn.Module):
     expansion = 1
+    decision_head: nn.Module
 
-    def __init__(self, in_planes, planes, stride=1, dropout_prob=0.0):
+    def __init__(
+        self, in_planes: int, planes: int, stride: int = 1, dropout_prob: float = 0.0
+    ) -> None:
         super().__init__()
         self.conv1 = nn.Conv2d(
             in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
@@ -45,7 +49,7 @@ class BasicBlock(nn.Module):
                 nn.BatchNorm2d(self.expansion * planes),
             )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         out = self.relu(self.bn1(self.conv1(x)))
         out = self.dropout(out)
         out = self.bn2(self.conv2(out))
@@ -55,7 +59,13 @@ class BasicBlock(nn.Module):
 
 
 class CifarResNet(nn.Module):
-    def __init__(self, block, num_blocks, num_classes=10, dropout_prob=0.0):
+    def __init__(
+        self,
+        block: type[BasicBlock],
+        num_blocks: list[int],
+        num_classes: int = 10,
+        dropout_prob: float = 0.0,
+    ) -> None:
         super().__init__()
         self.in_planes = 16
         self.dropout_prob = dropout_prob
@@ -87,7 +97,9 @@ class CifarResNet(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
-    def _make_layer(self, block, planes, num_blocks, stride):
+    def _make_layer(
+        self, block: type[BasicBlock], planes: int, num_blocks: int, stride: int
+    ) -> nn.Sequential:
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
         for stride in strides:
@@ -97,7 +109,7 @@ class CifarResNet(nn.Module):
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         out = self.relu(self.bn1(self.conv1(x)))
         out = self.layers(out)
         out = self.avgpool(out)
@@ -106,13 +118,13 @@ class CifarResNet(nn.Module):
         return out
 
 
-def cifar_resnet10(num_classes, dropout_prob=0.0):
+def cifar_resnet10(num_classes: int, dropout_prob: float = 0.0) -> CifarResNet:
     return CifarResNet(BasicBlock, [2, 2], num_classes, dropout_prob=dropout_prob)
 
 
-def cifar_resnet20(num_classes, dropout_prob=0.0):
+def cifar_resnet20(num_classes: int, dropout_prob: float = 0.0) -> CifarResNet:
     return CifarResNet(BasicBlock, [3, 3, 3], num_classes, dropout_prob=dropout_prob)
 
 
-def cifar_resnet56(num_classes, dropout_prob=0.0):
+def cifar_resnet56(num_classes: int, dropout_prob: float = 0.0) -> CifarResNet:
     return CifarResNet(BasicBlock, [9, 9, 9], num_classes, dropout_prob=dropout_prob)

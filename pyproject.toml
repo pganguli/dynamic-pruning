@@ -25,9 +25,17 @@
         # Note: TensorFlow does not publish wheels for Python 3.13+ — use a 3.11/3.12
         # venv for this extra if your environment is too new.
         kws = ["tensorflow>=2.12,<3", "filelock>=3.13", "platformdirs>=4.0", "torchaudio==2.11.0"]
+        dev = ["ruff", "ty"]
 
 [tool.setuptools.packages.find]
     include = ["dynamic_pruning*", "scripts*"]
+
+[tool.ruff.lint]
+    select = [
+        "I",   # isort (import sorting)
+        "UP",  # pyupgrade (automatic syntax upgrades)
+        "ANN", # flake8-annotations (type hints)
+    ]
 
 [build-system]
     requires      = ["setuptools>=68"]

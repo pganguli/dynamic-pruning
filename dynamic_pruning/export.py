@@ -56,6 +56,7 @@ import torch.nn as nn
 import torch.onnx
 from onnxconverter_common.float16 import convert_float_to_float16
 from onnxruntime.quantization import CalibrationDataReader, quantize_static
+from torch.utils.data import DataLoader
 
 from . import checkpoints
 from .config import ExportConfig
@@ -91,11 +92,11 @@ class ExportWrapper(nn.Module):
     """Routes r_tgt through the traced forward() call so ONNX export captures
     it as a genuine graph input rather than a constant frozen at trace time."""
 
-    def __init__(self, model: nn.Module):
+    def __init__(self, model: nn.Module) -> None:
         super().__init__()
         self.model = model
 
-    def forward(self, x: torch.Tensor, r_tgt: torch.Tensor):
+    def forward(self, x: torch.Tensor, r_tgt: torch.Tensor) -> torch.Tensor:
         default_graph.clear_tensor_list("r_tgt")
         default_graph.append_tensor("r_tgt", r_tgt)
         return self.model(x)
@@ -111,7 +112,11 @@ def _optimize_and_save(input_path: str, output_path: str) -> None:
 
 
 def _export_one(
-    wrapped: nn.Module, dummy_input, dummy_r_tgt, output_path: str, dynamic_batch: bool
+    wrapped: nn.Module,
+    dummy_input: torch.Tensor,
+    dummy_r_tgt: torch.Tensor,
+    output_path: str,
+    dynamic_batch: bool,
 ) -> None:
     with tempfile.NamedTemporaryFile(suffix=".onnx", delete=False) as tmp:
         tmp_path = tmp.name
@@ -151,12 +156,16 @@ class _CalibrationReader(CalibrationDataReader):
     axis (batched.onnx, which also accepts batch=1 as one valid instance).
     """
 
-    def __init__(self, testloader, r_values: tuple[float, ...], max_samples: int):
+    def __init__(
+        self, testloader: DataLoader, r_values: tuple[float, ...], max_samples: int
+    ) -> None:
         self._samples = self._make_samples(testloader, r_values, max_samples)
 
     @staticmethod
-    def _make_samples(testloader, r_values, max_samples):
-        samples = []
+    def _make_samples(
+        testloader: DataLoader, r_values: tuple[float, ...], max_samples: int
+    ) -> list[dict[str, np.ndarray]]:
+        samples: list[dict[str, np.ndarray]] = []
         r_idx = 0
         for data, _target in testloader:
             for i in range(data.shape[0]):
@@ -174,13 +183,15 @@ class _CalibrationReader(CalibrationDataReader):
                 break
         return samples
 
-    def get_next(self):
+    def get_next(self) -> dict[str, np.ndarray] | None:  # ty: ignore[invalid-method-override]
         if not self._samples:
             return None
         return self._samples.pop(0)
 
 
-def _export_int8(input_path: str, output_path: str, testloader, cfg: ExportConfig) -> None:
+def _export_int8(
+    input_path: str, output_path: str, testloader: DataLoader, cfg: ExportConfig
+) -> None:
     """Post-training static int8 quantization via onnxruntime.
 
     Only Conv nodes are quantized (`op_types_to_quantize=["Conv"]`) -- these
@@ -206,7 +217,7 @@ def _export_int8(input_path: str, output_path: str, testloader, cfg: ExportConfi
 
 def _evaluate_onnx_accuracy(
     onnx_path: str,
-    testloader,
+    testloader: DataLoader,
     r_values: tuple[float, ...],
     batch_of_one: bool = False,
     max_samples: int | None = None,
@@ -352,7 +363,9 @@ def run(cfg: ExportConfig) -> tuple[str, str]:
                 int8_acc = _evaluate_onnx_accuracy(
                     int8_path, testloader, _ACCURACY_R_VALUES, **eval_kwargs
                 )
-                print(f"{'r_tgt':>8} | {'fp32 acc':>10} | {'int8 acc':>10} | {'drop':>8}")
+                print(
+                    f"{'r_tgt':>8} | {'fp32 acc':>10} | {'int8 acc':>10} | {'drop':>8}"
+                )
                 max_drop = 0.0
                 for r_val in _ACCURACY_R_VALUES:
                     drop = fp32_acc[r_val] - int8_acc[r_val]

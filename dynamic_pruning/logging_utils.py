@@ -20,7 +20,7 @@ class RunLogger:
 
     def __init__(
         self, logdir: str, tensorboard: bool = True, tb_log_dir: str | None = None
-    ):
+    ) -> None:
         os.makedirs(logdir, exist_ok=True)
         log_file = os.path.join(logdir, "log")
         if os.path.exists(log_file):

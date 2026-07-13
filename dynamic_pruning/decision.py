@@ -31,11 +31,17 @@ Only two backbone block types are wired up: BasicBlock (ResNet) and ConvBlock
 """
 
 import types
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import RelaxedOneHotCategorical
+
+if TYPE_CHECKING:
+    from .models.har_cnn import ConvBlock
+    from .models.resnet import BasicBlock
 
 __all__ = [
     "TorchGraph",
@@ -55,7 +61,7 @@ __all__ = [
 
 
 class TorchGraph:
-    def __init__(self):
+    def __init__(self) -> None:
         self._graph: dict[str, list] = {}
         self.persistence: dict[str, bool] = {}
 
@@ -63,7 +69,7 @@ class TorchGraph:
         self._graph[name] = []
         self.persistence[name] = persist
 
-    def append_tensor(self, name: str, val) -> None:
+    def append_tensor(self, name: str, val: object) -> None:
         self._graph[name].append(val)
 
     def clear_tensor_list(self, name: str) -> None:
@@ -102,7 +108,7 @@ class DecisionHead(nn.Module):
         action_num: int,
         deterministic: bool = False,
         pruning_threshold: float = 0.0,
-    ):
+    ) -> None:
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -162,7 +168,7 @@ class DecisionHead(nn.Module):
         # pinning it to unit norm caps that spread regardless of how much
         # the regularizer wants more differentiation.
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         out = self.avgpool(self.relu(x))
         out = out.view(x.shape[0], x.shape[1])  # [B, C_in]
         # `out`'s magnitude grows with the backbone's feature scale over
@@ -222,13 +228,17 @@ class DecisionHead(nn.Module):
         return sampled_actions, selected_channels
 
 
-def apply_func(model: nn.Module, module_type: str, func, **kwargs) -> None:
+def apply_func(
+    model: nn.Module, module_type: str, func: Callable[..., None], **kwargs: object
+) -> None:
     for m in model.modules():
         if m.__class__.__name__ == module_type:
             func(m, **kwargs)
 
 
-def replace_func(model: nn.Module, module_type: str, func) -> None:
+def replace_func(
+    model: nn.Module, module_type: str, func: Callable[..., torch.Tensor]
+) -> None:
     for m in model.modules():
         if m.__class__.__name__ == module_type:
             m.forward = types.MethodType(func, m)
@@ -253,13 +263,13 @@ def set_pruning_threshold(m: DecisionHead, pruning_threshold: float) -> None:
     m.pruning_threshold = pruning_threshold
 
 
-def init_decision_basicblock(m, action_num: int) -> None:
+def init_decision_basicblock(m: "BasicBlock", action_num: int) -> None:
     m.decision_head = DecisionHead(
         m.conv1.in_channels, m.conv1.out_channels, action_num
     )
 
 
-def decision_basicblock_forward(self, x):
+def decision_basicblock_forward(self: "BasicBlock", x: torch.Tensor) -> torch.Tensor:
     sampled_actions, selected_channels = self.decision_head(x)
 
     default_graph.append_tensor("sampled_actions", sampled_actions)
@@ -276,13 +286,13 @@ def decision_basicblock_forward(self, x):
     return out
 
 
-def init_decision_conv_block(m, action_num: int) -> None:
+def init_decision_conv_block(m: "ConvBlock", action_num: int) -> None:
     m.decision_head = DecisionHead(
         m.conv1.in_channels, m.conv1.out_channels, action_num
     )
 
 
-def decision_conv_block_forward(self, x):
+def decision_conv_block_forward(self: "ConvBlock", x: torch.Tensor) -> torch.Tensor:
     out = self.conv1(x)
 
     sampled_actions, selected_channels = self.decision_head(x)

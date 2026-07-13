@@ -3,6 +3,7 @@
 import os
 import pathlib
 import sys
+from typing import Any
 
 import numpy as np
 import torch
@@ -39,7 +40,9 @@ def kws_dnn_model() -> pathlib.Path:
     return path
 
 
-def _preprocess_kws_dataset(original_dataset):
+def _preprocess_kws_dataset(
+    original_dataset: Any,  # noqa: ANN401 -- torchaudio dataset, an optional dep
+) -> tuple[np.ndarray, list[int]]:
     # From https://github.com/ARM-software/ML-KWS-for-MCU/blob/master/Pretrained_models/labels.txt
     new_labels = "_silence_ _unknown_ yes no up down left right on off stop go".split(
         " "
@@ -94,6 +97,7 @@ def _preprocess_kws_dataset(original_dataset):
                 mfccs = np.zeros(mfccs_shape)
             mfccs[n, :, :] = mfcc
 
+    assert mfccs is not None, "original_dataset must be non-empty"
     return mfccs, labels
 
 
@@ -122,7 +126,9 @@ def _load_google_speech(train: bool) -> TensorDataset:
     )
 
 
-def _load_har(train_batch_size: int, test_batch_size: int):
+def _load_har(
+    train_batch_size: int, test_batch_size: int
+) -> tuple[DataLoader, DataLoader]:
     # Inspired by https://blog.csdn.net/bucan804228552/article/details/120143943
     har_utils_dir = THIS_DIR / "dnn-models" / "deep-learning-HAR" / "utils"
     orig_sys_path = sys.path.copy()
@@ -167,7 +173,7 @@ def _load_har(train_batch_size: int, test_batch_size: int):
         sys.path[:] = orig_sys_path
 
 
-def _cifar_transforms():
+def _cifar_transforms() -> tuple[transforms.Compose, transforms.Compose]:
     train_tf = transforms.Compose(
         [
             transforms.RandomCrop(32, padding=4),
@@ -182,7 +188,9 @@ def _cifar_transforms():
     return train_tf, test_tf
 
 
-def prepare_data(dataset: str, train_batch_size: int, test_batch_size: int = 100):
+def prepare_data(
+    dataset: str, train_batch_size: int, test_batch_size: int = 100
+) -> tuple[DataLoader, DataLoader]:
     print("==> Preparing data..")
 
     if dataset in ("cifar10", "cifar100"):

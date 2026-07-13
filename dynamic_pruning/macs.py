@@ -22,6 +22,8 @@ own compute, which is real overhead paid in full regardless of r_tgt:
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -52,8 +54,8 @@ def profile_dense_macs(model: nn.Module, dummy_input: torch.Tensor) -> dict[str,
     macs: dict[str, int] = {}
     handles = []
 
-    def make_hook(name: str, module: nn.Module):
-        def hook(_module, _inp, out):
+    def make_hook(name: str, module: nn.Module) -> Callable[..., None]:
+        def hook(_module: nn.Module, _inp: tuple, out: torch.Tensor) -> None:
             if isinstance(module, nn.Conv2d):
                 macs[name] = _conv2d_macs(module, out.shape)
             elif isinstance(module, nn.Linear):
@@ -69,9 +71,7 @@ def profile_dense_macs(model: nn.Module, dummy_input: torch.Tensor) -> dict[str,
     model.eval()
     device = dummy_input.device
     default_graph.clear_all_tensors()
-    default_graph.append_tensor(
-        "r_tgt", torch.full((1, 1), 0.5, device=device)
-    )
+    default_graph.append_tensor("r_tgt", torch.full((1, 1), 0.5, device=device))
     with torch.no_grad():
         model(dummy_input)
     default_graph.clear_all_tensors()
@@ -84,7 +84,7 @@ def profile_dense_macs(model: nn.Module, dummy_input: torch.Tensor) -> dict[str,
 
 def measure_block_densities(
     model: nn.Module,
-    dataloader,
+    dataloader: torch.utils.data.DataLoader,
     r_tgt: float,
     device: str,
     pruning_threshold: float,
@@ -98,8 +98,10 @@ def measure_block_densities(
     counts: dict[str, int] = {}
     handles = []
 
-    def make_hook(name: str):
-        def hook(_module, _inp, output):
+    def make_hook(name: str) -> Callable[..., None]:
+        def hook(
+            _module: nn.Module, _inp: tuple, output: tuple[torch.Tensor, torch.Tensor]
+        ) -> None:
             _sampled_actions, selected_channels = output
             density = (selected_channels > pruning_threshold).float().mean().item()
             sums[name] = sums.get(name, 0.0) + density
@@ -130,7 +132,7 @@ def measure_block_densities(
 
 
 def macs_report(
-    dense_macs: dict[str, int], densities: dict[str, float | np.ndarray]
+    dense_macs: dict[str, int], densities: Mapping[str, float | np.ndarray]
 ) -> dict[str, float | np.ndarray]:
     """Combine dense per-module MACs with realized per-block densities.
 

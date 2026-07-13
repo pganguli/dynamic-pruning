@@ -48,7 +48,7 @@ def run(cfg: FinetuneConfig) -> float:
     trainloader, testloader = prepare_data(
         cfg.data.name, cfg.data.train_batch_size, cfg.data.test_batch_size
     )
-    n_test = len(testloader.dataset)  # type: ignore[arg-type]
+    n_test = len(testloader.dataset)  # ty: ignore[invalid-argument-type]
 
     model = initialize_model(cfg.data.name, cfg.model.arch, num_classes(cfg.data.name))
     model_params = list(model.parameters())
@@ -137,7 +137,7 @@ def run(cfg: FinetuneConfig) -> float:
                     )
                 log.scalars(scalars, step)
 
-    def test(epoch: int):
+    def test(epoch: int) -> tuple[float, float]:
         model.eval()
 
         if cfg.dynamic:

@@ -13,16 +13,18 @@ _Stride = int | tuple[int, int]
 
 
 class ConvBlock(nn.Module):
+    decision_head: nn.Module
+
     def __init__(
         self,
         in_channels: int,
         out_channels: int,
-        kernel_size,
-        padding,
+        kernel_size: int | tuple[int, int],
+        padding: int | tuple[int, int] | str,
         stride1: _Stride = 1,
         stride2: _Stride = 1,
         dropout_prob: float = 0.0,
-    ):
+    ) -> None:
         super().__init__()
         self.conv1 = nn.Conv2d(
             in_channels,
@@ -45,7 +47,7 @@ class ConvBlock(nn.Module):
         )
         self.relu2 = nn.ReLU()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv1(x)
         x = self.relu1(x)
         x = self.dropout(x)
@@ -55,7 +57,9 @@ class ConvBlock(nn.Module):
 
 
 class har_cnn(nn.Module):
-    def __init__(self, n_channels=9, n_classes=6, dropout_prob=0.0):
+    def __init__(
+        self, n_channels: int = 9, n_classes: int = 6, dropout_prob: float = 0.0
+    ) -> None:
         super().__init__()
         # (batch, 9, 128) -> (batch, 18, 64)
         self.conv1 = ConvBlock(
@@ -78,7 +82,7 @@ class har_cnn(nn.Module):
 
         self.ip1 = nn.Linear(16 * 72, n_classes)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = torch.unsqueeze(x, 2)
 
         # (batch, 9, 1, 128)

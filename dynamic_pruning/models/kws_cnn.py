@@ -5,13 +5,14 @@ KWS_CNN_S: compact depthwise-separable CNN that classifies 1-second mel-
   spectrogram patches into 10 keyword classes.  Reuses ConvBlock from har_cnn.
 """
 
+import torch
 import torch.nn as nn
 
 from .har_cnn import ConvBlock
 
 
 class KWS_CNN_S(nn.Module):
-    def __init__(self, n_channels=1, dropout_prob=0.0):
+    def __init__(self, n_channels: int = 1, dropout_prob: float = 0.0) -> None:
         super().__init__()
         self.conv1 = ConvBlock(
             in_channels=n_channels,
@@ -29,7 +30,7 @@ class KWS_CNN_S(nn.Module):
         self.pool = nn.MaxPool2d(kernel_size=(2, 2))
         return
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv1(x)
         x = self.pool(x)
         x = x.view(x.size(0), 2 * 2 * 28)

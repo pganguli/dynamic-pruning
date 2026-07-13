@@ -15,7 +15,7 @@ import argparse
 _original = getattr(argparse.ArgumentParser, "_check_help")
 
 
-def _safe_check_help(self, action):
+def _safe_check_help(self: argparse.ArgumentParser, action: argparse.Action) -> None:
     try:
         return _original(self, action)
     except (TypeError, ValueError):

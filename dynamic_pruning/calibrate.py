@@ -21,9 +21,11 @@ deployment time.
 """
 
 import csv
+from collections.abc import Callable
 
 import numpy as np
 import torch
+import torch.nn as nn
 
 from . import checkpoints
 from .config import CalibrateConfig
@@ -47,7 +49,9 @@ from .training.common import (
 __all__ = ["run"]
 
 
-def run(cfg: CalibrateConfig) -> list[tuple[float, float, float, float, float, float, float, float]]:
+def run(
+    cfg: CalibrateConfig,
+) -> list[tuple[float, float, float, float, float, float, float, float]]:
     action_num = cfg.decision.action_num or default_action_num(cfg.model.arch)
     logdir = checkpoints.decision_dir(
         action_num, cfg.data.name, cfg.model.arch, cfg.sparsity_level
@@ -57,7 +61,7 @@ def run(cfg: CalibrateConfig) -> list[tuple[float, float, float, float, float, f
     _, testloader = prepare_data(
         cfg.data.name, cfg.data.train_batch_size, cfg.data.test_batch_size
     )
-    n_test = len(testloader.dataset)  # type: ignore[arg-type]
+    n_test = len(testloader.dataset)  # ty: ignore[invalid-argument-type]
 
     model = initialize_model(cfg.data.name, cfg.model.arch, num_classes(cfg.data.name))
     transform_model(model, cfg.model.arch, action_num)
@@ -115,8 +119,10 @@ def run(cfg: CalibrateConfig) -> list[tuple[float, float, float, float, float, f
     # just a test-set-wide average.
     density_chunks: dict[str, list[np.ndarray]] = {}
 
-    def make_density_hook(name: str):
-        def hook(_module, _inp, output):
+    def make_density_hook(name: str) -> Callable[..., None]:
+        def hook(
+            _module: nn.Module, _inp: tuple, output: tuple[torch.Tensor, torch.Tensor]
+        ) -> None:
             _sampled_actions, selected_channels = output
             d = (
                 (selected_channels > cfg.decision.pruning_threshold)
